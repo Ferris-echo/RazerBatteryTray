@@ -60,7 +60,7 @@
 
 ```cmd
 # 克隆仓库
-git clone https://github.com/<your-username>/RazerBatteryTray.git
+git clone https://github.com/Ferris-echo/RazerBatteryTray.git
 cd RazerBatteryTray
 
 # 运行一键构建脚本
