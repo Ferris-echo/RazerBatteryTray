@@ -1,23 +1,30 @@
-# Build & temporary binaries
-*.exe
+# Temporary build artifacts
 *.dll
 *.pdb
 *.obj
 
-# Keep source and assets clean; large media goes to GitHub Releases
+# Promotional & local distribution assets
 *.mp4
 *.wav
 *.m4a
+*.zip
+*.html
+*.txt
 audio_voice/
 *.log
 
-# Scratch / Test files
+# Ignore test scripts & scratch images in root
 test_*
 capture_*
 MakeShowcase*
 backup_*/
-
-*.zip
-promo_*
 actual_*
+final_*
+promo_*
+*.png
+!screenshots/*.png
+
+TestConsole.exe
+render_menu_from_exe.cs
+*.jpg
 

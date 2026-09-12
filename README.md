@@ -1,7 +1,7 @@
 # 🐍 雷蛇电量管家 (Razer Battery Tray) v2.0 Pro
 
 <p align="center">
-  <img src="app_icon_clean.png" width="96" height="96" alt="Razer Battery Tray Logo" />
+  <img src="screenshots/app_icon_clean.png" width="96" height="96" alt="Razer Battery Tray Logo" />
 </p>
 
 <p align="center">
@@ -34,10 +34,10 @@
 
 | 🌞 正常工作模式 (84% 能量充沛) | 🌙 智能休眠待机模式 (独家算法记忆) |
 | :---: | :---: |
-| ![正常工作状态](win11_awake.png) | ![休眠待机状态](win11_sleep.png) |
+| ![正常工作状态](screenshots/win11_awake.png) | ![休眠待机状态](screenshots/win11_sleep.png) |
 
 ### 任务栏三大原生风格展示
-![任务栏托盘样式](verified_tray_styles.png)
+![任务栏托盘样式](screenshots/verified_tray_styles.png)
 
 ---
 
