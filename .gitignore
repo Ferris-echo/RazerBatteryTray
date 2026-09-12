@@ -1,0 +1,23 @@
+# Build & temporary binaries
+*.exe
+*.dll
+*.pdb
+*.obj
+
+# Keep source and assets clean; large media goes to GitHub Releases
+*.mp4
+*.wav
+*.m4a
+audio_voice/
+*.log
+
+# Scratch / Test files
+test_*
+capture_*
+MakeShowcase*
+backup_*/
+
+*.zip
+promo_*
+actual_*
+

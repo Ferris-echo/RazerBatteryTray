@@ -17,8 +17,11 @@ namespace RazerBatteryTray
         [DllImport("user32.dll")]
         static extern bool SetProcessDPIAware();
 
+        [DllImport("kernel32.dll")]
+        static extern ulong GetTickCount64();
+
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             try
             {
@@ -50,15 +53,68 @@ namespace RazerBatteryTray
             }
             catch { }
 
+            bool isAutoStart = false;
+            if (args != null)
+            {
+                for (int i = 0; i < args.Length; i++)
+                {
+                    if (args[i] != null && args[i].IndexOf("autostart", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        isAutoStart = true;
+                        break;
+                    }
+                }
+            }
+
+            // Fallback heuristic: If launched without --autostart, but system was booted within 6 minutes (360,000 ms)
+            // and this app is registered in HKCU Run key, check if AutoStartShowUI is NOT 1.
+            // This ensures that even if Windows Run key was outdated or stripped parameters, it will stay silent on boot.
+            if (!isAutoStart)
+            {
+                try
+                {
+                    ulong uptimeMs = GetTickCount64();
+                    if (uptimeMs < 360000) // Within 6 minutes of system boot
+                    {
+                        using (var runKey = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", false))
+                        {
+                            if (runKey != null && runKey.GetValue("RazerBatteryTray") != null)
+                            {
+                                bool showUI = false;
+                                using (var cfgKey = Registry.CurrentUser.OpenSubKey(@"Software\RazerBatteryTray", false))
+                                {
+                                    if (cfgKey != null)
+                                    {
+                                        var val = cfgKey.GetValue("AutoStartShowUI");
+                                        if (val != null && (int)val == 1)
+                                        {
+                                            showUI = true;
+                                        }
+                                    }
+                                }
+
+                                if (!showUI)
+                                {
+                                    isAutoStart = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new MainForm());
+            Application.Run(new MainForm(isAutoStart));
         }
     }
 
     public class MouseBatteryInfo
     {
         public bool IsConnected { get; set; }
+        public bool IsSleeping { get; set; }
+        public bool IsDonglePresent { get; set; }
         public string DeviceName { get; set; }
         public int BatteryPercent { get; set; }
         public bool IsCharging { get; set; }
@@ -464,179 +520,139 @@ namespace RazerBatteryTray
 
     public class ModernDarkMenuRenderer : ToolStripProfessionalRenderer
     {
-        private static readonly Color BgColor = Color.FromArgb(20, 21, 26);
-        private static readonly Color HoverColor = Color.FromArgb(36, 40, 52);
-        private static readonly Color BorderColor = Color.FromArgb(48, 54, 68);
-        private static readonly Color TextWhite = Color.FromArgb(240, 244, 252);
-        private static readonly Color TextGray = Color.FromArgb(145, 153, 168);
-        private static readonly Color BrandGreen = Color.FromArgb(0, 230, 118);
-        private static readonly Color SubmenuArrowColor = Color.FromArgb(170, 178, 195);
-        private static readonly Color SubmenuArrowHover = Color.FromArgb(0, 230, 118);
+        private static readonly Color bgCol = Color.FromArgb(24, 27, 34);
+        private static readonly Color hoverCol = Color.FromArgb(38, 44, 58);
+        private static readonly Color hoverBorder = Color.FromArgb(58, 68, 90);
+        private static readonly Color textCol = Color.FromArgb(235, 240, 250);
+        private static readonly Color disabledCol = Color.FromArgb(100, 110, 128);
+        private static readonly Color separatorCol = Color.FromArgb(42, 48, 62);
+        private static readonly Color accentGreen = Color.FromArgb(0, 230, 118);
 
         public ModernDarkMenuRenderer() : base(new DarkColorTable()) { }
 
-        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
-        {
-            using (SolidBrush brush = new SolidBrush(BgColor))
-            {
-                e.Graphics.FillRectangle(brush, e.AffectedBounds);
-            }
-        }
-
-        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
-        {
-            using (Pen pen = new Pen(BorderColor, 1))
-            {
-                e.Graphics.DrawRectangle(pen, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
-            }
-        }
-
         protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
         {
-            if (e.Item.IsOnDropDown)
+            if (e.Item.Selected && e.Item.Enabled)
             {
-                Rectangle rc = new Rectangle(3, 1, e.Item.Width - 6, e.Item.Height - 2);
-                if (e.Item.Selected && e.Item.Enabled)
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                Rectangle r = new Rectangle(4, 1, e.Item.Width - 8, e.Item.Height - 2);
+                using (GraphicsPath path = RoundedCard.GetRoundedRectangle(r, 4))
                 {
-                    using (GraphicsPath path = RoundedCard.GetRoundedRectangle(rc, 4))
+                    using (SolidBrush b = new SolidBrush(hoverCol))
                     {
-                        using (SolidBrush brush = new SolidBrush(HoverColor))
-                        {
-                            e.Graphics.FillPath(brush, path);
-                        }
+                        e.Graphics.FillPath(b, path);
+                    }
+                    using (Pen p = new Pen(hoverBorder, 1f))
+                    {
+                        e.Graphics.DrawPath(p, path);
                     }
                 }
             }
-            else
+            else if (e.Item.OwnerItem != null && e.Item.Pressed)
             {
-                base.OnRenderMenuItemBackground(e);
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                Rectangle r = new Rectangle(4, 1, e.Item.Width - 8, e.Item.Height - 2);
+                using (GraphicsPath path = RoundedCard.GetRoundedRectangle(r, 4))
+                using (SolidBrush b = new SolidBrush(hoverCol))
+                {
+                    e.Graphics.FillPath(b, path);
+                }
             }
         }
 
         protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
         {
-            e.Graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-            Color textColor;
-
-            if (e.Item.Tag != null && e.Item.Tag.ToString() == "Header")
+            Color color = textCol;
+            if (!e.Item.Enabled)
             {
-                textColor = BrandGreen;
+                color = disabledCol;
             }
-            else if (!e.Item.Enabled)
+            else if (e.Item.Tag != null && e.Item.Tag.ToString() == "Header")
             {
-                textColor = TextGray;
+                color = accentGreen;
+
+                // Draw status dot in left image margin column (exactly aligned with checkmarks)
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                float dotY = e.Item.Height / 2f;
+                float dotX = 17f;
+                float radius = 3.5f;
+                using (SolidBrush dotBrush = new SolidBrush(accentGreen))
+                {
+                    e.Graphics.FillEllipse(dotBrush, dotX - radius, dotY - radius, radius * 2f, radius * 2f);
+                }
             }
             else if (e.Item.Selected)
             {
-                textColor = Color.White;
-            }
-            else
-            {
-                textColor = TextWhite;
+                color = Color.White;
             }
 
-            Rectangle textRect = e.TextRectangle;
-            textRect.X = 36;
-            textRect.Width = e.Item.Width - 36 - 28;
-
-            TextFormatFlags flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine;
-            TextRenderer.DrawText(e.Graphics, e.Text, e.TextFont, textRect, textColor, flags);
-        }
-
-        protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e)
-        {
-            var item = e.Item as ToolStripMenuItem;
-            if (item != null && item.Checked)
-            {
-                Graphics g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-
-                float checkCenterX = 18f;
-                float checkCenterY = e.Item.Height / 2.0f;
-
-                using (Pen pen = new Pen(BrandGreen, 2.0f))
-                {
-                    pen.StartCap = LineCap.Round;
-                    pen.EndCap = LineCap.Round;
-                    pen.LineJoin = LineJoin.Round;
-
-                    PointF[] points = new PointF[]
-                    {
-                        new PointF(checkCenterX - 4.5f, checkCenterY - 0.5f),
-                        new PointF(checkCenterX - 1.5f, checkCenterY + 3.0f),
-                        new PointF(checkCenterX + 4.5f, checkCenterY - 3.5f)
-                    };
-                    g.DrawLines(pen, points);
-                }
-            }
-        }
-
-        protected override void OnRenderItemImage(ToolStripItemImageRenderEventArgs e)
-        {
-            if (e.Item.Tag != null && e.Item.Tag.ToString() == "Header")
-            {
-                Graphics g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-
-                float dotCenterX = 18f;
-                float dotCenterY = e.Item.Height / 2.0f;
-                float dotRadius = 3.5f;
-
-                using (SolidBrush dotBrush = new SolidBrush(BrandGreen))
-                {
-                    g.FillEllipse(dotBrush, dotCenterX - dotRadius, dotCenterY - dotRadius, dotRadius * 2, dotRadius * 2);
-                }
-                return;
-            }
-
-            base.OnRenderItemImage(e);
+            // Text is drawn starting at e.TextRectangle.X (aligning Header 'R' with other text below)
+            Rectangle textRect = new Rectangle(e.TextRectangle.X, 0, e.TextRectangle.Width, e.Item.Height);
+            TextRenderer.DrawText(e.Graphics, e.Text, e.TextFont, textRect, color,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
         }
 
         protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
         {
-            using (Pen pen = new Pen(BorderColor, 1))
+            int y = e.Item.Height / 2;
+            using (Pen p = new Pen(separatorCol, 1f))
             {
-                int y = e.Item.Height / 2;
-                e.Graphics.DrawLine(pen, 12, y, e.Item.Width - 12, y);
+                e.Graphics.DrawLine(p, 8, y, e.Item.Width - 8, y);
+            }
+        }
+
+        protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            float centerY = e.Item.Height / 2f;
+            float cx = 17f;
+
+            PointF[] pts = new PointF[] {
+                new PointF(cx - 5.0f, centerY - 0.5f),
+                new PointF(cx - 1.5f, centerY + 3.5f),
+                new PointF(cx + 5.5f, centerY - 4.5f)
+            };
+            using (Pen p = new Pen(accentGreen, 2.2f))
+            {
+                p.StartCap = LineCap.Round;
+                p.EndCap = LineCap.Round;
+                p.LineJoin = LineJoin.Round;
+                e.Graphics.DrawLines(p, pts);
             }
         }
 
         protected override void OnRenderArrow(ToolStripArrowRenderEventArgs e)
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            Color arrowColor = (e.Item != null && e.Item.Selected) ? SubmenuArrowHover : SubmenuArrowColor;
+            float centerY = e.Item.Height / 2f;
+            float cx = e.ArrowRectangle.X + e.ArrowRectangle.Width / 2f;
 
-            Rectangle rect = e.ArrowRectangle;
-            float cx = rect.Left + (rect.Width / 2f);
-            float cy = rect.Top + (rect.Height / 2f);
-
-            PointF[] arrowPoints = new PointF[]
-            {
-                new PointF(cx - 2f, cy - 4.5f),
-                new PointF(cx + 2.5f, cy),
-                new PointF(cx - 2f, cy + 4.5f)
+            Color arrowColor = e.Item.Selected ? Color.White : Color.FromArgb(145, 155, 175);
+            PointF[] arrow = new PointF[] {
+                new PointF(cx - 2.5f, centerY - 4.5f),
+                new PointF(cx + 2.0f, centerY),
+                new PointF(cx - 2.5f, centerY + 4.5f)
             };
-
-            using (Pen pen = new Pen(arrowColor, 1.8f))
+            using (Pen p = new Pen(arrowColor, 1.8f))
             {
-                pen.StartCap = LineCap.Round;
-                pen.EndCap = LineCap.Round;
-                pen.LineJoin = LineJoin.Round;
-                e.Graphics.DrawLines(pen, arrowPoints);
+                p.StartCap = LineCap.Round;
+                p.EndCap = LineCap.Round;
+                p.LineJoin = LineJoin.Round;
+                e.Graphics.DrawLines(p, arrow);
             }
         }
 
+        protected override void OnRenderImageMargin(ToolStripRenderEventArgs e) { }
+
         private class DarkColorTable : ProfessionalColorTable
         {
-            public override Color ToolStripDropDownBackground { get { return BgColor; } }
-            public override Color MenuBorder { get { return BorderColor; } }
+            public override Color MenuBorder { get { return Color.FromArgb(48, 54, 68); } }
             public override Color MenuItemBorder { get { return Color.Transparent; } }
-            public override Color MenuItemSelected { get { return HoverColor; } }
-            public override Color SeparatorDark { get { return BorderColor; } }
-            public override Color SeparatorLight { get { return Color.Transparent; } }
-            public override Color ImageMarginGradientBegin { get { return BgColor; } }
-            public override Color ImageMarginGradientMiddle { get { return BgColor; } }
-            public override Color ImageMarginGradientEnd { get { return BgColor; } }
+            public override Color MenuItemSelected { get { return Color.FromArgb(38, 44, 58); } }
+            public override Color ToolStripDropDownBackground { get { return Color.FromArgb(24, 27, 34); } }
+            public override Color ImageMarginGradientBegin { get { return Color.FromArgb(24, 27, 34); } }
+            public override Color ImageMarginGradientMiddle { get { return Color.FromArgb(24, 27, 34); } }
+            public override Color ImageMarginGradientEnd { get { return Color.FromArgb(24, 27, 34); } }
         }
     }
 
@@ -646,12 +662,32 @@ namespace RazerBatteryTray
 
     public class DpiOsdForm : Form
     {
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+        private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOZORDER = 0x0004;
+        private const uint SWP_NOACTIVATE = 0x0010;
+        private const uint SWP_SHOWWINDOW = 0x0040;
+        private const uint SWP_HIDEWINDOW = 0x0080;
+        private const uint SWP_NOOWNERZORDER = 0x0200;
+        private const uint SWP_NOSENDCHANGING = 0x0400;
+
         private int currentDpi = 3000;
         private int currentStage = 4;
         private int totalStages = 5;
+        private int osdStyle = 0; // 0 = Centered Capsule, 1 = Stepped Gauge, 2 = Compact Top-Right
         private System.Windows.Forms.Timer displayTimer;
         private System.Windows.Forms.Timer fadeTimer;
         private float dpiScale = 1.0f;
+
+        public int OsdStyle
+        {
+            get { return osdStyle; }
+            set { osdStyle = value; }
+        }
 
         protected override bool ShowWithoutActivation
         {
@@ -666,8 +702,21 @@ namespace RazerBatteryTray
                 cp.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE: never steal focus from full-screen games
                 cp.ExStyle |= 0x00000080; // WS_EX_TOOLWINDOW: hide from Alt+Tab
                 cp.ExStyle |= 0x00000008; // WS_EX_TOPMOST: render above foreground windows
+                cp.ExStyle |= 0x00000020; // WS_EX_TRANSPARENT: mouse clicks pass directly through to games
                 return cp;
             }
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            const int WM_MOUSEACTIVATE = 0x0021;
+            const int MA_NOACTIVATE = 3;
+            if (m.Msg == WM_MOUSEACTIVATE)
+            {
+                m.Result = (IntPtr)MA_NOACTIVATE;
+                return;
+            }
+            base.WndProc(ref m);
         }
 
         public DpiOsdForm(float scale)
@@ -675,11 +724,14 @@ namespace RazerBatteryTray
             this.dpiScale = scale;
             this.FormBorderStyle = FormBorderStyle.None;
             this.ShowInTaskbar = false;
-            this.TopMost = true;
+            // Note: Do NOT set this.TopMost = true; WinForms TopMost setter calls SetWindowPos without SWP_NOACTIVATE!
             this.StartPosition = FormStartPosition.Manual;
-            this.BackColor = Color.FromArgb(18, 20, 26);
+            this.BackColor = Color.FromArgb(17, 19, 25);
             this.DoubleBuffered = true;
-            this.Size = new Size((int)(240 * dpiScale), (int)(80 * dpiScale));
+            this.Size = new Size((int)(160 * dpiScale), (int)(58 * dpiScale));
+
+            // Pre-create native HWND so it never incurs creation latency during gaming
+            IntPtr forceHandle = this.Handle;
 
             displayTimer = new System.Windows.Forms.Timer();
             displayTimer.Interval = 2000;
@@ -693,54 +745,76 @@ namespace RazerBatteryTray
             fadeTimer.Interval = 20;
             fadeTimer.Tick += (s, e) =>
             {
-                if (this.Opacity > 0.05)
+                if (this.Opacity > 0.08)
                 {
-                    this.Opacity -= 0.1;
+                    this.Opacity -= 0.12;
                 }
                 else
                 {
                     fadeTimer.Stop();
-                    this.Hide();
+                    HideOsd();
                 }
             };
+        }
+
+        public void HideOsd()
+        {
+            try
+            {
+                if (this.IsHandleCreated)
+                {
+                    SetWindowPos(this.Handle, IntPtr.Zero, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW | SWP_NOSENDCHANGING);
+                }
+            }
+            catch { }
         }
 
         public void ShowDpi(int dpi, int stage, int count)
         {
             this.currentDpi = dpi;
             this.currentStage = stage;
-            this.totalStages = count;
+            this.totalStages = count > 0 ? count : 5;
 
             displayTimer.Stop();
             fadeTimer.Stop();
-            this.Opacity = 0.96;
+            this.Opacity = 1.0;
 
-            Rectangle wa = Screen.PrimaryScreen.WorkingArea;
-            int margin = (int)(24 * dpiScale);
-            this.Location = new Point(wa.Right - this.Width - margin, wa.Bottom - this.Height - margin);
-
-            if (!this.Visible)
+            int targetW;
+            int targetH;
+            if (osdStyle == 0)
             {
-                this.Show();
+                targetW = 160;
+                targetH = 58;
             }
+            else if (osdStyle == 1)
+            {
+                targetW = (dpi >= 10000) ? 192 : 184;
+                targetH = 62;
+            }
+            else
+            {
+                targetW = (dpi >= 10000) ? 178 : 170;
+                targetH = 62;
+            }
+
+            int scaledW = (int)(targetW * dpiScale);
+            int scaledH = (int)(targetH * dpiScale);
+
+            Screen targetScreen = Screen.FromPoint(Cursor.Position);
+            if (targetScreen == null) targetScreen = Screen.PrimaryScreen;
+            Rectangle wa = targetScreen.WorkingArea;
+            int margin = (int)(24 * dpiScale);
+
+            int targetX = wa.Right - scaledW - margin;
+            int targetY = wa.Bottom - scaledH - margin;
+
+            // Pure Win32 display without activation or Z-order change that could minimize full-screen games
+            SetWindowPos(this.Handle, HWND_TOPMOST, targetX, targetY, scaledW, scaledH,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOSENDCHANGING);
+
             this.Invalidate();
             displayTimer.Start();
-        }
-
-        private static void DrawCrosshair(Graphics g, float cx, float cy, float radius, Color color)
-        {
-            using (Pen pen = new Pen(color, 1.4f))
-            {
-                g.DrawEllipse(pen, cx - radius, cy - radius, radius * 2, radius * 2);
-                g.DrawLine(pen, cx - radius - 3, cy, cx - radius + 2, cy);
-                g.DrawLine(pen, cx + radius - 2, cy, cx + radius + 3, cy);
-                g.DrawLine(pen, cx, cy - radius - 3, cx, cy - radius + 2);
-                g.DrawLine(pen, cx, cy + radius - 2, cx, cy + radius + 3);
-            }
-            using (SolidBrush brush = new SolidBrush(color))
-            {
-                g.FillEllipse(brush, cx - 1.5f, cy - 1.5f, 3f, 3f);
-            }
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -748,73 +822,319 @@ namespace RazerBatteryTray
             base.OnPaint(e);
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
 
-            // Rounded Card background
-            Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
-            using (GraphicsPath path = RoundedCard.GetRoundedRectangle(rect, (int)(10 * dpiScale)))
+            // 1. Common Card Background & Subtle Dark Edge
+            RectangleF rect = new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
+            using (GraphicsPath path = RoundedCard.GetRoundRectF(rect, 8f * dpiScale))
             {
-                using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(20, 22, 30)))
+                using (SolidBrush bgBrush = new SolidBrush(Color.FromArgb(17, 19, 25)))
                 {
                     g.FillPath(bgBrush, path);
                 }
-                using (Pen borderPen = new Pen(Color.FromArgb(0, 230, 118), 1.5f))
+                using (Pen borderPen = new Pen(Color.FromArgb(42, 47, 60), 1.0f))
                 {
                     g.DrawPath(borderPen, path);
                 }
             }
 
-            // Left vertical accent bar
-            using (GraphicsPath barPath = RoundedCard.GetRoundedRectangle(new Rectangle((int)(6 * dpiScale), (int)(12 * dpiScale), (int)(4 * dpiScale), Height - (int)(24 * dpiScale)), (int)(2 * dpiScale)))
-            using (SolidBrush barBrush = new SolidBrush(Color.FromArgb(0, 230, 118)))
+            using (FontFamily ffYaHei = new FontFamily("Microsoft YaHei UI"))
+            using (FontFamily ffSegoe = new FontFamily("Segoe UI"))
             {
-                g.FillPath(barBrush, barPath);
-            }
+                StringFormat sf = StringFormat.GenericTypographic;
 
-            // Vector Crosshair
-            DrawCrosshair(g, 26 * dpiScale, 21 * dpiScale, 5.5f * dpiScale, Color.FromArgb(0, 230, 118));
-
-            // Title
-            using (Font titleFont = new Font("Microsoft YaHei UI", 8.8F * dpiScale, FontStyle.Regular))
-            using (SolidBrush titleBrush = new SolidBrush(Color.FromArgb(160, 170, 188)))
-            {
-                g.DrawString("鼠标 DPI 已切换", titleFont, titleBrush, 36 * dpiScale, 13 * dpiScale);
-            }
-
-            // Big DPI Number
-            using (Font dpiFont = new Font("Microsoft YaHei UI", 18F * dpiScale, FontStyle.Bold))
-            using (SolidBrush dpiBrush = new SolidBrush(Color.FromArgb(0, 230, 118)))
-            {
-                g.DrawString(currentDpi + " DPI", dpiFont, dpiBrush, 20 * dpiScale, 34 * dpiScale);
-            }
-
-            // Stage pill on right
-            string stageText = string.Format("第 {0} / {1} 档", currentStage, totalStages);
-            using (Font stageFont = new Font("Microsoft YaHei UI", 8.8F * dpiScale, FontStyle.Bold))
-            {
-                SizeF stSize = g.MeasureString(stageText, stageFont);
-                int pillW = (int)stSize.Width + (int)(14 * dpiScale);
-                int pillH = (int)(24 * dpiScale);
-                int pillX = Width - pillW - (int)(14 * dpiScale);
-                int pillY = (int)(38 * dpiScale);
-
-                Rectangle pillRect = new Rectangle(pillX, pillY, pillW, pillH);
-                using (GraphicsPath pillPath = RoundedCard.GetRoundedRectangle(pillRect, (int)(6 * dpiScale)))
+                if (osdStyle == 0)
                 {
-                    using (SolidBrush pillBg = new SolidBrush(Color.FromArgb(30, 44, 38)))
+                    // ================= STYLE 0: 居中电竞胶囊 (Ultra-Compact, Symmetrical HUD) =================
+                    // 1. Top Title (Centered Dot + "鼠标 DPI")
+                    float topY = 7f * dpiScale;
+                    float titleSize = 10f * dpiScale;
+                    using (GraphicsPath titlePath = new GraphicsPath())
                     {
-                        g.FillPath(pillBg, pillPath);
-                    }
-                    using (Pen pillBorder = new Pen(Color.FromArgb(0, 180, 90), 1f))
-                    {
-                        g.DrawPath(pillBorder, pillPath);
+                        titlePath.AddString("鼠标 DPI", ffYaHei, (int)FontStyle.Regular, titleSize, PointF.Empty, sf);
+                        RectangleF titleBounds = titlePath.GetBounds();
+
+                        float dotD = 4f * dpiScale;
+                        float dotGap = 4.5f * dpiScale;
+                        float topContentW = dotD + dotGap + titleBounds.Width;
+                        float topStartX = (Width - topContentW) / 2f;
+
+                        float dotY = topY + (titleBounds.Height - dotD) / 2f;
+                        using (SolidBrush dotBrush = new SolidBrush(Color.FromArgb(0, 230, 118)))
+                            g.FillEllipse(dotBrush, topStartX, dotY, dotD, dotD);
+
+                        using (Matrix mTitle = new Matrix())
+                        {
+                            mTitle.Translate(topStartX + dotD + dotGap - titleBounds.Left, topY - titleBounds.Top);
+                            titlePath.Transform(mTitle);
+                        }
+                        using (SolidBrush titleBrush = new SolidBrush(Color.FromArgb(145, 155, 175)))
+                            g.FillPath(titleBrush, titlePath);
+
+                        // 3. Bottom Capsules (Row 3)
+                        int segCount = totalStages > 0 ? totalStages : 5;
+                        float segW = 19f * dpiScale;
+                        float segH = 3.5f * dpiScale;
+                        float segGap = 4f * dpiScale;
+                        float totalSegW = segCount * segW + (segCount - 1) * segGap;
+                        float segStartX = (Width - totalSegW) / 2f;
+                        float bottomMargin = 8f * dpiScale;
+                        float segY = Height - bottomMargin - segH;
+
+                        for (int i = 1; i <= segCount; i++)
+                        {
+                            RectangleF segRect = new RectangleF(segStartX + (i - 1) * (segW + segGap), segY, segW, segH);
+                            using (GraphicsPath sp = RoundedCard.GetRoundRectF(segRect, 1.75f * dpiScale))
+                            {
+                                Color c = (i == currentStage) ? Color.FromArgb(0, 230, 118) : Color.FromArgb(36, 40, 52);
+                                using (SolidBrush b = new SolidBrush(c))
+                                    g.FillPath(b, sp);
+                            }
+                        }
+
+                        // 2. Middle Value ("3000" + "DPI") - Perfectly Centered & Exact Baseline Aligned
+                        float numFontSize = 20f * dpiScale;
+                        float unitFontSize = 10f * dpiScale;
+
+                        using (GraphicsPath numPath = new GraphicsPath())
+                        using (GraphicsPath unitPath = new GraphicsPath())
+                        {
+                            string numStr = currentDpi.ToString();
+                            numPath.AddString(numStr, ffSegoe, (int)FontStyle.Bold, numFontSize, PointF.Empty, sf);
+                            RectangleF numBounds = numPath.GetBounds();
+
+                            unitPath.AddString("DPI", ffSegoe, (int)FontStyle.Bold, unitFontSize, PointF.Empty, sf);
+                            RectangleF unitBounds = unitPath.GetBounds();
+
+                            float valGap = 4f * dpiScale;
+                            float totalValW = numBounds.Width + valGap + unitBounds.Width;
+                            float valStartX = (Width - totalValW) / 2f;
+
+                            float midZoneTop = topY + titleBounds.Height;
+                            float midZoneBottom = segY;
+                            float midZoneH = midZoneBottom - midZoneTop;
+                            float targetNumTop = midZoneTop + (midZoneH - numBounds.Height) / 2f;
+                            float targetBaseline = targetNumTop + numBounds.Height;
+
+                            using (Matrix mNum = new Matrix())
+                            {
+                                mNum.Translate(valStartX - numBounds.Left, targetNumTop - numBounds.Top);
+                                numPath.Transform(mNum);
+                            }
+                            using (SolidBrush whiteBrush = new SolidBrush(Color.FromArgb(248, 250, 255)))
+                                g.FillPath(whiteBrush, numPath);
+
+                            float targetUnitTop = targetBaseline - unitBounds.Height;
+                            using (Matrix mUnit = new Matrix())
+                            {
+                                mUnit.Translate(valStartX + numBounds.Width + valGap - unitBounds.Left, targetUnitTop - unitBounds.Top);
+                                unitPath.Transform(mUnit);
+                            }
+                            using (SolidBrush greenBrush = new SolidBrush(Color.FromArgb(0, 230, 118)))
+                                g.FillPath(greenBrush, unitPath);
+                        }
                     }
                 }
-
-                using (SolidBrush textBrush = new SolidBrush(Color.FromArgb(0, 230, 118)))
-                using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+                else if (osdStyle == 1)
                 {
-                    g.DrawString(stageText, stageFont, textBrush, pillRect, sf);
+                    // ================= STYLE 1: 右侧阶梯能量计 (Faithful & Optical Left Aligned) =================
+                    float padLeft = 14f * dpiScale;
+                    float padRight = 14f * dpiScale;
+
+                    float titleFontSize = 9.5f * dpiScale;
+                    using (GraphicsPath titlePath = new GraphicsPath())
+                    {
+                        titlePath.AddString("鼠标 DPI", ffYaHei, (int)FontStyle.Regular, titleFontSize, PointF.Empty, sf);
+                        RectangleF titleBounds = titlePath.GetBounds();
+
+                        float numFontSize = (currentDpi >= 10000 ? 19.5f : 21.5f) * dpiScale;
+                        float unitFontSize = 10f * dpiScale;
+
+                        using (GraphicsPath numPath = new GraphicsPath())
+                        using (GraphicsPath unitPath = new GraphicsPath())
+                        {
+                            string numStr = currentDpi.ToString();
+                            numPath.AddString(numStr, ffSegoe, (int)FontStyle.Bold, numFontSize, PointF.Empty, sf);
+                            RectangleF numBounds = numPath.GetBounds();
+
+                            unitPath.AddString("DPI", ffSegoe, (int)FontStyle.Bold, unitFontSize, PointF.Empty, sf);
+                            RectangleF unitBounds = unitPath.GetBounds();
+
+                            float rowGap = 3.5f * dpiScale;
+                            float totalLeftBlockH = titleBounds.Height + rowGap + numBounds.Height;
+                            float startY = (Height - totalLeftBlockH) / 2f;
+
+                            // 1. Top Left: Dot + "鼠标 DPI"
+                            float topY = startY;
+                            float dotD = 4.5f * dpiScale;
+                            float dotGap = 5f * dpiScale;
+                            float dotX = padLeft;
+                            float dotY = topY + (titleBounds.Height - dotD) / 2f;
+
+                            using (SolidBrush dotBrush = new SolidBrush(Color.FromArgb(0, 230, 118)))
+                                g.FillEllipse(dotBrush, dotX, dotY, dotD, dotD);
+
+                            float titleX = dotX + dotD + dotGap;
+                            using (Matrix mTitle = new Matrix())
+                            {
+                                mTitle.Translate(titleX - titleBounds.Left, topY - titleBounds.Top);
+                                titlePath.Transform(mTitle);
+                            }
+                            using (SolidBrush titleBrush = new SolidBrush(Color.FromArgb(145, 155, 175)))
+                                g.FillPath(titleBrush, titlePath);
+
+                            // 2. Large Value: Optical left anchor with dotX
+                            float numY = topY + titleBounds.Height + rowGap;
+                            float baselineY = numY + numBounds.Height;
+
+                            using (Matrix mNum = new Matrix())
+                            {
+                                mNum.Translate(padLeft - numBounds.Left, numY - numBounds.Top);
+                                numPath.Transform(mNum);
+                            }
+                            using (SolidBrush whiteBrush = new SolidBrush(Color.FromArgb(248, 250, 255)))
+                                g.FillPath(whiteBrush, numPath);
+
+                            // Unit: Exact baseline alignment
+                            float valGap = 4f * dpiScale;
+                            float unitX = padLeft + numBounds.Width + valGap;
+                            float unitY = baselineY - unitBounds.Height;
+
+                            using (Matrix mUnit = new Matrix())
+                            {
+                                mUnit.Translate(unitX - unitBounds.Left, unitY - unitBounds.Top);
+                                unitPath.Transform(mUnit);
+                            }
+                            using (SolidBrush greenBrush = new SolidBrush(Color.FromArgb(0, 230, 118)))
+                                g.FillPath(greenBrush, unitPath);
+
+                            // 3. Right Stepped Energy Bars
+                            int barCount = totalStages > 0 ? totalStages : 5;
+                            float barW = 4.5f * dpiScale;
+                            float barGap = 4f * dpiScale;
+                            float totalBarsW = barCount * barW + (barCount - 1) * barGap;
+                            float barStartX = Width - padRight - totalBarsW;
+                            float barBaseY = baselineY + (0.5f * dpiScale);
+
+                            float minH = 8f * dpiScale;
+                            float maxH = 25f * dpiScale;
+                            float stepH = (maxH - minH) / (barCount - 1);
+
+                            for (int i = 1; i <= barCount; i++)
+                            {
+                                float barH = minH + (i - 1) * stepH;
+                                float barY = barBaseY - barH;
+                                RectangleF barRect = new RectangleF(barStartX + (i - 1) * (barW + barGap), barY, barW, barH);
+                                using (GraphicsPath bp = RoundedCard.GetRoundRectF(barRect, 1.75f * dpiScale))
+                                {
+                                    Color c;
+                                    if (i == currentStage)
+                                        c = Color.FromArgb(0, 230, 118); // Active stage: Razer green
+                                    else if (i < currentStage)
+                                        c = Color.FromArgb(0, 135, 68);  // Lower stages: deep green
+                                    else
+                                        c = Color.FromArgb(38, 43, 56);  // Higher stages: dark grey track
+
+                                    using (SolidBrush b = new SolidBrush(c))
+                                        g.FillPath(b, bp);
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // ================= STYLE 2: 顶置微型指示段 (Faithful & Balanced Compact) =================
+                    float padLeft = 14f * dpiScale;
+                    float padRight = 14f * dpiScale;
+
+                    float titleFontSize = 9.5f * dpiScale;
+                    using (GraphicsPath titlePath = new GraphicsPath())
+                    {
+                        titlePath.AddString("鼠标 DPI", ffYaHei, (int)FontStyle.Regular, titleFontSize, PointF.Empty, sf);
+                        RectangleF titleBounds = titlePath.GetBounds();
+
+                        float numFontSize = (currentDpi >= 10000 ? 19.5f : 21.5f) * dpiScale;
+                        float unitFontSize = 10f * dpiScale;
+
+                        using (GraphicsPath numPath = new GraphicsPath())
+                        using (GraphicsPath unitPath = new GraphicsPath())
+                        {
+                            string numStr = currentDpi.ToString();
+                            numPath.AddString(numStr, ffSegoe, (int)FontStyle.Bold, numFontSize, PointF.Empty, sf);
+                            RectangleF numBounds = numPath.GetBounds();
+
+                            unitPath.AddString("DPI", ffSegoe, (int)FontStyle.Bold, unitFontSize, PointF.Empty, sf);
+                            RectangleF unitBounds = unitPath.GetBounds();
+
+                            float rowGap = 3.5f * dpiScale;
+                            float totalLeftBlockH = titleBounds.Height + rowGap + numBounds.Height;
+                            float startY = (Height - totalLeftBlockH) / 2f;
+                            float topY = startY;
+
+                            // 1. Top Left: Accent Bar + "鼠标 DPI"
+                            float barW = 3f * dpiScale;
+                            float barGap = 5.5f * dpiScale;
+                            float barH = titleBounds.Height - 1f * dpiScale;
+                            RectangleF pillRect = new RectangleF(padLeft, topY + 0.5f * dpiScale, barW, barH);
+                            using (GraphicsPath vp = RoundedCard.GetRoundRectF(pillRect, 1.25f * dpiScale))
+                            using (SolidBrush vb = new SolidBrush(Color.FromArgb(0, 230, 118)))
+                                g.FillPath(vb, vp);
+
+                            float titleX = padLeft + barW + barGap;
+                            using (Matrix mTitle = new Matrix())
+                            {
+                                mTitle.Translate(titleX - titleBounds.Left, topY - titleBounds.Top);
+                                titlePath.Transform(mTitle);
+                            }
+                            using (SolidBrush titleBrush = new SolidBrush(Color.FromArgb(145, 155, 175)))
+                                g.FillPath(titleBrush, titlePath);
+
+                            // 2. Top Right: 5 Mini Capsules
+                            int segCount = totalStages > 0 ? totalStages : 5;
+                            float segW = 11f * dpiScale;
+                            float segH = 4.2f * dpiScale;
+                            float segGap = 3.5f * dpiScale;
+                            float totalSegW = segCount * segW + (segCount - 1) * segGap;
+                            float segStartX = Width - padRight - totalSegW;
+                            float segY = topY + (titleBounds.Height - segH) / 2f;
+
+                            for (int i = 1; i <= segCount; i++)
+                            {
+                                RectangleF segRect = new RectangleF(segStartX + (i - 1) * (segW + segGap), segY, segW, segH);
+                                using (GraphicsPath sp = RoundedCard.GetRoundRectF(segRect, 1.75f * dpiScale))
+                                {
+                                    Color c = (i == currentStage) ? Color.FromArgb(0, 230, 118) : Color.FromArgb(38, 43, 56);
+                                    using (SolidBrush b = new SolidBrush(c))
+                                        g.FillPath(b, sp);
+                                }
+                            }
+
+                            // 3. Bottom Row: Number + Unit
+                            float numY = topY + titleBounds.Height + rowGap;
+                            float baselineY = numY + numBounds.Height;
+
+                            using (Matrix mNum = new Matrix())
+                            {
+                                mNum.Translate(padLeft - numBounds.Left, numY - numBounds.Top);
+                                numPath.Transform(mNum);
+                            }
+                            using (SolidBrush whiteBrush = new SolidBrush(Color.FromArgb(248, 250, 255)))
+                                g.FillPath(whiteBrush, numPath);
+
+                            float valGap = 4f * dpiScale;
+                            float unitX = padLeft + numBounds.Width + valGap;
+                            float unitY = baselineY - unitBounds.Height;
+
+                            using (Matrix mUnit = new Matrix())
+                            {
+                                mUnit.Translate(unitX - unitBounds.Left, unitY - unitBounds.Top);
+                                unitPath.Transform(mUnit);
+                            }
+                            using (SolidBrush greenBrush = new SolidBrush(Color.FromArgb(0, 230, 118)))
+                                g.FillPath(greenBrush, unitPath);
+                        }
+                    }
                 }
             }
         }
@@ -851,6 +1171,23 @@ namespace RazerBatteryTray
             public short dbcc_name;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        struct RAWINPUTDEVICE
+        {
+            public ushort usUsagePage;
+            public ushort usUsage;
+            public uint dwFlags;
+            public IntPtr hwndTarget;
+        }
+
+        const ushort HID_USAGE_PAGE_GENERIC = 0x01;
+        const ushort HID_USAGE_GENERIC_MOUSE = 0x02;
+        const uint RIDEV_INPUTSINK = 0x00000100;
+        const int WM_INPUT = 0x00FF;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern bool RegisterRawInputDevices([MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] RAWINPUTDEVICE[] pRawInputDevices, uint uiNumDevices, uint cbSize);
+
         [DllImport("user32.dll", SetLastError = true)]
         static extern IntPtr RegisterDeviceNotification(IntPtr hRecipient, IntPtr NotificationFilter, uint Flags);
 
@@ -869,16 +1206,33 @@ namespace RazerBatteryTray
         private ContextMenuStrip contextMenu;
         private ToolStripMenuItem statusMenuItem;
         private ToolStripMenuItem autoStartMenuItem;
+        private ToolStripMenuItem autoStartShowUIMenuItem;
         private ToolStripMenuItem lowBatteryAlertMenuItem;
         private ToolStripMenuItem dpiOsdMenuItem;
         private ToolStripMenuItem styleCapsuleItem;
         private ToolStripMenuItem styleNumItem;
+        private ToolStripMenuItem osdStyleMenu;
+        private ToolStripMenuItem osdStyleCapsuleItem;
+        private ToolStripMenuItem osdStyleGaugeItem;
+        private ToolStripMenuItem osdStyleCompactItem;
         private ToolStripMenuItem int30sMenuItem;
         private ToolStripMenuItem int1mMenuItem;
         private ToolStripMenuItem int5mMenuItem;
         private ToolStripMenuItem dpiMenu;
         private ToolStripMenuItem rateMenu;
         private System.Windows.Forms.Timer updateTimer;
+
+        // Mouse Sleeping & Instant Wakeup
+        private volatile bool isMouseSleeping = false;
+        private System.Windows.Forms.Timer wakeBurstTimer;
+        private int wakeRetryCount = 0;
+        private System.Windows.Forms.Timer bootPollTimer;
+        private int bootPollCount = 0;
+
+        // AutoStart Window Visibility Control
+        private bool isAutoStartLaunch = false;
+        private bool autoStartShowMainWindow = false;
+        private bool allowVisibleCore = false;
 
         // Background DPI Listener Thread
         private Thread dpiMonitorThread;
@@ -893,8 +1247,6 @@ namespace RazerBatteryTray
         private Label lblConnDot;
         private Label lblBatteryBig;
         private StatusPill pillStatus;
-        private StatusPill pillDpi;
-        private StatusPill pillRate;
         private ModernProgressBar barBattery;
         private Label lblUpdateTime;
 
@@ -918,8 +1270,13 @@ namespace RazerBatteryTray
         private ModernSegmentButton btnInt30s;
         private ModernSegmentButton btnInt1m;
         private ModernSegmentButton btnInt5m;
+        private Label lblOsdStyleTitle;
+        private ModernSegmentButton btnOsdStyleCapsule;
+        private ModernSegmentButton btnOsdStyleGauge;
+        private ModernSegmentButton btnOsdStyleCompact;
         private SubtleDivider divSettings;
         private ModernCheckBox chkAutoStart;
+        private ModernCheckBox chkAutoStartShowUI;
         private ModernCheckBox chkLowAlert;
         private ModernCheckBox chkDpiOsd;
         private Label lblSettingsTip;
@@ -937,14 +1294,17 @@ namespace RazerBatteryTray
         private bool lastLowAlertFired = false;
         private bool isUpdatingUI = false;
         private int trayStyle = 0; // 0 = Capsule, 1 = Number
+        private int osdStyle = 0; // 0 = Centered Capsule, 1 = Stepped Gauge, 2 = Compact Top-Right
         private float dpiScale = 1.0f;
         private MouseBatteryInfo lastInfo = null;
 
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
         static extern bool DestroyIcon(IntPtr handle);
 
-        public MainForm()
+        public MainForm(bool isAutoStart = false)
         {
+            this.isAutoStartLaunch = isAutoStart;
+
             using (Graphics g = this.CreateGraphics())
             {
                 dpiScale = g.DpiX / 96.0f;
@@ -967,6 +1327,7 @@ namespace RazerBatteryTray
 
             osdForm = new DpiOsdForm(dpiScale);
 
+            RazerDeviceHelper.LoadHardwareCache();
             InitializeFormUI();
             InitializeTray();
             LoadConfig();
@@ -977,7 +1338,18 @@ namespace RazerBatteryTray
             updateTimer.Start();
 
             RefreshBatteryStatus(false);
+            StartBootPolling();
             StartDpiMonitor();
+        }
+
+        protected override void SetVisibleCore(bool value)
+        {
+            if (isAutoStartLaunch && !autoStartShowMainWindow && !allowVisibleCore)
+            {
+                value = false;
+                if (!this.IsHandleCreated) CreateHandle();
+            }
+            base.SetVisibleCore(value);
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -985,6 +1357,135 @@ namespace RazerBatteryTray
             base.OnHandleCreated(e);
             ApplyModernWin11Theme();
             RegisterUsbNotification();
+            RegisterMouseRawInput();
+        }
+
+        private void RegisterMouseRawInput()
+        {
+            try
+            {
+                RAWINPUTDEVICE[] rid = new RAWINPUTDEVICE[1];
+                rid[0].usUsagePage = HID_USAGE_PAGE_GENERIC;
+                rid[0].usUsage = HID_USAGE_GENERIC_MOUSE;
+                rid[0].dwFlags = RIDEV_INPUTSINK;
+                rid[0].hwndTarget = this.Handle;
+                RegisterRawInputDevices(rid, 1, (uint)Marshal.SizeOf(typeof(RAWINPUTDEVICE)));
+            }
+            catch { }
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_DEVICECHANGE)
+            {
+                int wp = m.WParam.ToInt32();
+                if (wp == DBT_DEVICEARRIVAL || wp == DBT_DEVICEREMOVECOMPLETE || wp == DBT_DEVNODES_CHANGED)
+                {
+                    OnDeviceHardwareChange();
+                }
+            }
+            else if (m.Msg == WM_INPUT)
+            {
+                OnMouseRawInputActivity();
+            }
+            base.WndProc(ref m);
+        }
+
+        private void OnMouseRawInputActivity()
+        {
+            if (isMouseSleeping || lastInfo == null || !lastInfo.IsConnected || lastInfo.BatteryPercent <= 0)
+            {
+                TriggerWakeBurst();
+            }
+        }
+
+        private void TriggerWakeBurst()
+        {
+            if (wakeBurstTimer == null)
+            {
+                wakeBurstTimer = new System.Windows.Forms.Timer();
+                wakeBurstTimer.Tick += WakeBurstTimer_Tick;
+            }
+
+            if (!wakeBurstTimer.Enabled)
+            {
+                wakeRetryCount = 0;
+                wakeBurstTimer.Interval = 80;
+                wakeBurstTimer.Start();
+            }
+        }
+
+        private void WakeBurstTimer_Tick(object sender, EventArgs e)
+        {
+            wakeRetryCount++;
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                var info = RazerDeviceHelper.QueryRazerDeviceInfo();
+                try
+                {
+                    this.BeginInvoke(new Action(() =>
+                    {
+                        if (info != null)
+                        {
+                            lastInfo = info;
+                            UpdateUI(info, false);
+
+                            if (info.IsConnected && !info.IsSleeping && info.BatteryPercent > 0)
+                            {
+                                if (wakeBurstTimer != null) wakeBurstTimer.Stop();
+                                wakeRetryCount = 0;
+                                return;
+                            }
+                        }
+
+                        if (wakeRetryCount >= 6)
+                        {
+                            if (wakeBurstTimer != null) wakeBurstTimer.Stop();
+                            wakeRetryCount = 0;
+                        }
+                        else if (wakeBurstTimer != null && wakeBurstTimer.Enabled)
+                        {
+                            wakeBurstTimer.Interval = 100 + wakeRetryCount * 150;
+                        }
+                    }));
+                }
+                catch { }
+            });
+        }
+
+        private void StartBootPolling()
+        {
+            bootPollCount = 0;
+            if (bootPollTimer == null)
+            {
+                bootPollTimer = new System.Windows.Forms.Timer();
+                bootPollTimer.Interval = 1200;
+                bootPollTimer.Tick += (s, e) =>
+                {
+                    bootPollCount++;
+                    if (lastInfo == null || lastInfo.IsSleeping || !lastInfo.IsConnected || lastInfo.BatteryPercent <= 0)
+                    {
+                        ThreadPool.QueueUserWorkItem(_ =>
+                        {
+                            var info = RazerDeviceHelper.QueryRazerDeviceInfo();
+                            try
+                            {
+                                this.BeginInvoke(new Action(() =>
+                                {
+                                    lastInfo = info;
+                                    UpdateUI(info, false);
+                                }));
+                            }
+                            catch { }
+                        });
+                    }
+                    if (bootPollCount >= 8 || (lastInfo != null && lastInfo.IsConnected && !lastInfo.IsSleeping && lastInfo.BatteryPercent > 0))
+                    {
+                        bootPollTimer.Stop();
+                    }
+                };
+            }
+            bootPollTimer.Start();
         }
 
         private void RegisterUsbNotification()
@@ -1014,18 +1515,6 @@ namespace RazerBatteryTray
             catch { }
         }
 
-        protected override void WndProc(ref Message m)
-        {
-            if (m.Msg == WM_DEVICECHANGE)
-            {
-                int wp = m.WParam.ToInt32();
-                if (wp == DBT_DEVICEARRIVAL || wp == DBT_DEVICEREMOVECOMPLETE || wp == DBT_DEVNODES_CHANGED)
-                {
-                    OnDeviceHardwareChange();
-                }
-            }
-            base.WndProc(ref m);
-        }
 
         private void OnDeviceHardwareChange()
         {
@@ -1145,29 +1634,13 @@ namespace RazerBatteryTray
             lblBatteryBig.AutoSize = true;
             cardBattery.Controls.Add(lblBatteryBig);
 
-            // Status Pill 1: Charging / Battery State
+            // Status Pill: Power / Charging State (sole status badge in Card 1)
             pillStatus = new StatusPill();
-            pillStatus.Location = new Point((int)(145 * dpiScale), (int)(56 * dpiScale));
-            pillStatus.Size = new Size((int)(84 * dpiScale), (int)(28 * dpiScale));
-            pillStatus.Font = new Font("Microsoft YaHei UI", 8.8F, FontStyle.Bold, GraphicsUnit.Point);
-            pillStatus.SetStatus("电池供电", Color.FromArgb(0, 230, 118));
+            pillStatus.Location = new Point((int)(180 * dpiScale), (int)(60 * dpiScale));
+            pillStatus.Size = new Size((int)(110 * dpiScale), (int)(32 * dpiScale));
+            pillStatus.Font = new Font("Microsoft YaHei UI", 9.2F, FontStyle.Bold, GraphicsUnit.Point);
+            pillStatus.SetStatus("⚡ 充电中", Color.FromArgb(0, 230, 118));
             cardBattery.Controls.Add(pillStatus);
-
-            // Status Pill 2: DPI Pill
-            pillDpi = new StatusPill();
-            pillDpi.Location = new Point((int)(236 * dpiScale), (int)(56 * dpiScale));
-            pillDpi.Size = new Size((int)(105 * dpiScale), (int)(28 * dpiScale));
-            pillDpi.Font = new Font("Microsoft YaHei UI", 8.8F, FontStyle.Bold, GraphicsUnit.Point);
-            pillDpi.SetStatus("3000 DPI", Color.FromArgb(0, 200, 255));
-            cardBattery.Controls.Add(pillDpi);
-
-            // Status Pill 3: Polling Rate Pill
-            pillRate = new StatusPill();
-            pillRate.Location = new Point((int)(348 * dpiScale), (int)(56 * dpiScale));
-            pillRate.Size = new Size((int)(78 * dpiScale), (int)(28 * dpiScale));
-            pillRate.Font = new Font("Microsoft YaHei UI", 8.8F, FontStyle.Bold, GraphicsUnit.Point);
-            pillRate.SetStatus("4000 Hz", Color.FromArgb(255, 214, 0));
-            cardBattery.Controls.Add(pillRate);
 
             barBattery = new ModernProgressBar();
             barBattery.Location = new Point((int)(18 * dpiScale), (int)(118 * dpiScale));
@@ -1272,7 +1745,7 @@ namespace RazerBatteryTray
 
             // ================= CARD 3: CONFIGURATION & PREFERENCES =================
             int card3Y = card2Y + card2H + (int)(12 * dpiScale);
-            int card3H = (int)(208 * dpiScale);
+            int card3H = (int)(244 * dpiScale);
 
             cardSettings = new RoundedCard();
             cardSettings.Location = new Point(padX, card3Y);
@@ -1359,15 +1832,50 @@ namespace RazerBatteryTray
             btnInt5m.Click += (s, e) => SetInterval(300000, false);
             cardSettings.Controls.Add(btnInt5m);
 
-            // Row 3: Modern subtle divider
+            // Row 3: DPI 浮窗样式 (居中胶囊 / 阶梯能量 / 顶置微标)
+            int row3Y = (int)(112 * dpiScale);
+
+            lblOsdStyleTitle = new Label();
+            lblOsdStyleTitle.Text = "DPI 浮窗样式";
+            lblOsdStyleTitle.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+            lblOsdStyleTitle.ForeColor = Color.FromArgb(160, 168, 185);
+            lblOsdStyleTitle.Location = new Point(cPad, row3Y + (int)(4 * dpiScale));
+            lblOsdStyleTitle.Size = new Size(lblTitleW, (int)(22 * dpiScale));
+            cardSettings.Controls.Add(lblOsdStyleTitle);
+
+            btnOsdStyleCapsule = new ModernSegmentButton();
+            btnOsdStyleCapsule.Text = "居中胶囊";
+            btnOsdStyleCapsule.Font = new Font("Microsoft YaHei UI", 8.8F, FontStyle.Regular, GraphicsUnit.Point);
+            btnOsdStyleCapsule.Location = new Point(seg1X, row3Y);
+            btnOsdStyleCapsule.Size = new Size(seg2W, segH);
+            btnOsdStyleCapsule.Click += (s, e) => SetOsdStyle(0, true);
+            cardSettings.Controls.Add(btnOsdStyleCapsule);
+
+            btnOsdStyleGauge = new ModernSegmentButton();
+            btnOsdStyleGauge.Text = "阶梯能量";
+            btnOsdStyleGauge.Font = new Font("Microsoft YaHei UI", 8.8F, FontStyle.Regular, GraphicsUnit.Point);
+            btnOsdStyleGauge.Location = new Point(seg1X + seg2W + seg2Gap, row3Y);
+            btnOsdStyleGauge.Size = new Size(seg2W, segH);
+            btnOsdStyleGauge.Click += (s, e) => SetOsdStyle(1, true);
+            cardSettings.Controls.Add(btnOsdStyleGauge);
+
+            btnOsdStyleCompact = new ModernSegmentButton();
+            btnOsdStyleCompact.Text = "顶置微标";
+            btnOsdStyleCompact.Font = new Font("Microsoft YaHei UI", 8.8F, FontStyle.Regular, GraphicsUnit.Point);
+            btnOsdStyleCompact.Location = new Point(seg1X + (seg2W + seg2Gap) * 2, row3Y);
+            btnOsdStyleCompact.Size = new Size(seg2W, segH);
+            btnOsdStyleCompact.Click += (s, e) => SetOsdStyle(2, true);
+            cardSettings.Controls.Add(btnOsdStyleCompact);
+
+            // Row 4: Modern subtle divider
             divSettings = new SubtleDivider();
-            divSettings.Location = new Point(cPad, (int)(114 * dpiScale));
+            divSettings.Location = new Point(cPad, (int)(150 * dpiScale));
             divSettings.Size = new Size(secW, (int)(8 * dpiScale));
             cardSettings.Controls.Add(divSettings);
 
-            // Row 4: Checkboxes
-            int chkY1 = (int)(126 * dpiScale);
-            int chkY2 = (int)(154 * dpiScale);
+            // Row 5: Checkboxes in 2x2 grid
+            int chkY1 = (int)(162 * dpiScale);
+            int chkY2 = (int)(190 * dpiScale);
             int chkGap = (int)(14 * dpiScale);
             int chkW = (secW - chkGap) / 2;
             int chkH = (int)(24 * dpiScale);
@@ -1383,10 +1891,21 @@ namespace RazerBatteryTray
             };
             cardSettings.Controls.Add(chkAutoStart);
 
+            chkAutoStartShowUI = new ModernCheckBox();
+            chkAutoStartShowUI.Text = "开机弹出主窗口";
+            chkAutoStartShowUI.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+            chkAutoStartShowUI.Location = new Point(cPad + chkW + chkGap, chkY1);
+            chkAutoStartShowUI.Size = new Size(chkW, chkH);
+            chkAutoStartShowUI.CheckedChanged += (s, e) => {
+                if (isUpdatingUI) return;
+                SetAutoStartShowUI(chkAutoStartShowUI.Checked, true);
+            };
+            cardSettings.Controls.Add(chkAutoStartShowUI);
+
             chkLowAlert = new ModernCheckBox();
             chkLowAlert.Text = "低电量提醒 (≤20%)";
             chkLowAlert.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
-            chkLowAlert.Location = new Point(cPad + chkW + chkGap, chkY1);
+            chkLowAlert.Location = new Point(cPad, chkY2);
             chkLowAlert.Size = new Size(chkW, chkH);
             chkLowAlert.CheckedChanged += (s, e) => {
                 if (isUpdatingUI) return;
@@ -1395,22 +1914,22 @@ namespace RazerBatteryTray
             cardSettings.Controls.Add(chkLowAlert);
 
             chkDpiOsd = new ModernCheckBox();
-            chkDpiOsd.Text = "DPI 按键切换屏幕提示 (OSD 浮窗)";
+            chkDpiOsd.Text = "DPI 切换屏幕提示 (OSD)";
             chkDpiOsd.Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
-            chkDpiOsd.Location = new Point(cPad, chkY2);
-            chkDpiOsd.Size = new Size(secW, chkH);
+            chkDpiOsd.Location = new Point(cPad + chkW + chkGap, chkY2);
+            chkDpiOsd.Size = new Size(chkW, chkH);
             chkDpiOsd.CheckedChanged += (s, e) => {
                 if (isUpdatingUI) return;
                 SetDpiOsdEnabled(chkDpiOsd.Checked);
             };
             cardSettings.Controls.Add(chkDpiOsd);
 
-            // Row 5: Hint inside Card 3
+            // Row 6: Hint inside Card 3
             lblSettingsTip = new Label();
             lblSettingsTip.Text = "注：切换线缆/接收器或按键调 DPI 时将自动即时同步，无需等待计时周期";
             lblSettingsTip.Font = new Font("Microsoft YaHei UI", 8.2F, FontStyle.Regular, GraphicsUnit.Point);
             lblSettingsTip.ForeColor = Color.FromArgb(120, 128, 142);
-            lblSettingsTip.Location = new Point(cPad, (int)(182 * dpiScale));
+            lblSettingsTip.Location = new Point(cPad, (int)(218 * dpiScale));
             lblSettingsTip.AutoSize = true;
             cardSettings.Controls.Add(lblSettingsTip);
 
@@ -1518,6 +2037,17 @@ namespace RazerBatteryTray
             styleMenu.DropDownItems.AddRange(new ToolStripItem[] { styleCapsuleItem, styleNumItem });
             contextMenu.Items.Add(styleMenu);
 
+            osdStyleMenu = new ToolStripMenuItem("DPI 浮窗样式 (&O)");
+            osdStyleMenu.DropDown.Renderer = contextMenu.Renderer;
+            osdStyleCapsuleItem = new ToolStripMenuItem("居中电竞胶囊", null, (s, e) => SetOsdStyle(0, true));
+            osdStyleGaugeItem = new ToolStripMenuItem("右侧阶梯能量计", null, (s, e) => SetOsdStyle(1, true));
+            osdStyleCompactItem = new ToolStripMenuItem("顶置微型指示段", null, (s, e) => SetOsdStyle(2, true));
+            osdStyleCapsuleItem.Checked = (osdStyle == 0);
+            osdStyleGaugeItem.Checked = (osdStyle == 1);
+            osdStyleCompactItem.Checked = (osdStyle == 2);
+            osdStyleMenu.DropDownItems.AddRange(new ToolStripItem[] { osdStyleCapsuleItem, osdStyleGaugeItem, osdStyleCompactItem });
+            contextMenu.Items.Add(osdStyleMenu);
+
             contextMenu.Items.Add(new ToolStripSeparator());
 
             dpiOsdMenuItem = new ToolStripMenuItem("DPI 切换屏幕提示 (OSD)", null, (s, e) => {
@@ -1534,6 +2064,11 @@ namespace RazerBatteryTray
                 SetAutoStart(!IsAutoStartEnabled(), true);
             });
             contextMenu.Items.Add(autoStartMenuItem);
+
+            autoStartShowUIMenuItem = new ToolStripMenuItem("开机弹出主窗口", null, (s, e) => {
+                SetAutoStartShowUI(!autoStartShowMainWindow, true);
+            });
+            contextMenu.Items.Add(autoStartShowUIMenuItem);
 
             contextMenu.Items.Add(new ToolStripSeparator());
 
@@ -1563,6 +2098,7 @@ namespace RazerBatteryTray
 
         private void ShowWindow()
         {
+            allowVisibleCore = true;
             RefreshBatteryStatus(false);
             this.Show();
             this.WindowState = FormWindowState.Normal;
@@ -1623,6 +2159,16 @@ namespace RazerBatteryTray
                     int dpi, stage, count;
                     if (RazerDeviceHelper.FastQueryDpi(out dpi, out stage, out count))
                     {
+                        if (isMouseSleeping || lastInfo == null || !lastInfo.IsConnected || (lastInfo != null && lastInfo.BatteryPercent <= 0))
+                        {
+                            isMouseSleeping = false;
+                            try
+                            {
+                                this.BeginInvoke(new Action(() => RefreshBatteryStatus(false)));
+                            }
+                            catch { }
+                        }
+
                         if (dpi > 0)
                         {
                             if (lastMonitoredDpi != -1 && (dpi != lastMonitoredDpi || stage != lastMonitoredStage))
@@ -1662,12 +2208,6 @@ namespace RazerBatteryTray
                 lastInfo.DpiStageCount = stageCount;
             }
 
-            // Update DPI Pill
-            if (pillDpi != null)
-            {
-                pillDpi.SetStatus(newDpi + " DPI", Color.FromArgb(0, 200, 255));
-            }
-
             // Highlight corresponding segment button
             if (btnDpiStages != null)
             {
@@ -1700,22 +2240,34 @@ namespace RazerBatteryTray
         public void SetDpiFromUI(int dpi)
         {
             new Thread(() => {
-                bool ok = RazerDeviceHelper.SetRazerDpi(dpi);
-                if (ok)
+                int targetStage = -1;
+                for (int i = 0; i < dpiStageValues.Length; i++)
                 {
-                    int queryDpi, stage, count;
-                    if (RazerDeviceHelper.FastQueryDpi(out queryDpi, out stage, out count))
+                    if (dpiStageValues[i] == dpi)
                     {
-                        this.BeginInvoke(new Action(() => {
-                            OnDpiChanged(queryDpi, stage, count);
-                        }));
+                        targetStage = i + 1;
+                        break;
                     }
-                    else
-                    {
-                        this.BeginInvoke(new Action(() => {
-                            OnDpiChanged(dpi, 1, 5);
-                        }));
-                    }
+                }
+
+                if (targetStage > 0)
+                {
+                    RazerDeviceHelper.SetRazerDpiStage(targetStage);
+                }
+                RazerDeviceHelper.SetRazerDpi(dpi);
+
+                int queryDpi, stage, count;
+                if (RazerDeviceHelper.FastQueryDpi(out queryDpi, out stage, out count))
+                {
+                    this.BeginInvoke(new Action(() => {
+                        OnDpiChanged(queryDpi, stage, count);
+                    }));
+                }
+                else
+                {
+                    this.BeginInvoke(new Action(() => {
+                        OnDpiChanged(dpi, targetStage > 0 ? targetStage : 1, dpiStageValues.Length);
+                    }));
                 }
             }) { IsBackground = true }.Start();
         }
@@ -1728,7 +2280,6 @@ namespace RazerBatteryTray
                 {
                     this.BeginInvoke(new Action(() => {
                         if (lastInfo != null) lastInfo.PollingRate = hz;
-                        if (pillRate != null) pillRate.SetStatus(hz + " Hz", Color.FromArgb(255, 214, 0));
 
                         if (btnRates != null)
                         {
@@ -1853,6 +2404,49 @@ namespace RazerBatteryTray
             }
         }
 
+        private void SetOsdStyle(int style, bool showNotification = false)
+        {
+            osdStyle = style;
+            if (osdStyle < 0 || osdStyle > 2) osdStyle = 0;
+            SaveConfig();
+
+            if (osdForm != null)
+            {
+                osdForm.OsdStyle = osdStyle;
+            }
+
+            isUpdatingUI = true;
+            try
+            {
+                if (osdStyleCapsuleItem != null) osdStyleCapsuleItem.Checked = (osdStyle == 0);
+                if (osdStyleGaugeItem != null) osdStyleGaugeItem.Checked = (osdStyle == 1);
+                if (osdStyleCompactItem != null) osdStyleCompactItem.Checked = (osdStyle == 2);
+
+                if (btnOsdStyleCapsule != null) btnOsdStyleCapsule.Selected = (osdStyle == 0);
+                if (btnOsdStyleGauge != null) btnOsdStyleGauge.Selected = (osdStyle == 1);
+                if (btnOsdStyleCompact != null) btnOsdStyleCompact.Selected = (osdStyle == 2);
+            }
+            finally
+            {
+                isUpdatingUI = false;
+            }
+
+            // Trigger instant live preview so the user immediately sees their chosen style!
+            if (dpiOsdEnabled && osdForm != null)
+            {
+                int previewDpi = (lastInfo != null && lastInfo.Dpi > 0) ? lastInfo.Dpi : 3000;
+                int previewStage = (lastInfo != null && lastInfo.DpiStage > 0) ? lastInfo.DpiStage : 4;
+                int previewCount = (lastInfo != null && lastInfo.DpiStageCount > 0) ? lastInfo.DpiStageCount : 5;
+                osdForm.ShowDpi(previewDpi, previewStage, previewCount);
+            }
+
+            if (showNotification && trayIcon != null)
+            {
+                string name = (osdStyle == 0) ? "居中电竞胶囊" : ((osdStyle == 1) ? "右侧阶梯能量计" : "顶置微型指示段");
+                trayIcon.ShowBalloonTip(1500, "DPI 浮窗样式已切换", "当前浮窗样式: " + name, ToolTipIcon.Info);
+            }
+        }
+
         private void UpdateMenuStatusTexts()
         {
             if (lowBatteryAlertMenuItem != null)
@@ -1860,11 +2454,22 @@ namespace RazerBatteryTray
                 lowBatteryAlertMenuItem.Text = "低电量气泡通知 (≤20%)";
                 lowBatteryAlertMenuItem.Checked = lowBatteryAlertEnabled;
             }
+            bool autoStart = IsAutoStartEnabled();
             if (autoStartMenuItem != null)
             {
-                bool autoStart = IsAutoStartEnabled();
                 autoStartMenuItem.Text = "开机自动启动";
                 autoStartMenuItem.Checked = autoStart;
+            }
+            if (autoStartShowUIMenuItem != null)
+            {
+                autoStartShowUIMenuItem.Text = "开机弹出主窗口";
+                autoStartShowUIMenuItem.Checked = autoStartShowMainWindow;
+                autoStartShowUIMenuItem.Enabled = autoStart;
+            }
+            if (chkAutoStartShowUI != null)
+            {
+                chkAutoStartShowUI.Checked = autoStartShowMainWindow;
+                chkAutoStartShowUI.Enabled = autoStart;
             }
             if (dpiOsdMenuItem != null)
             {
@@ -1887,11 +2492,21 @@ namespace RazerBatteryTray
                         var dVal = key.GetValue("DpiOsdAlert");
                         if (dVal != null) dpiOsdEnabled = (int)dVal == 1;
 
+                        var autoShowVal = key.GetValue("AutoStartShowUI");
+                        if (autoShowVal != null) autoStartShowMainWindow = (int)autoShowVal == 1;
+
                         var sVal = key.GetValue("TrayIconStyle");
                         if (sVal != null)
                         {
                             trayStyle = (int)sVal;
                             if (trayStyle != 0 && trayStyle != 1) trayStyle = 0;
+                        }
+
+                        var oVal = key.GetValue("OsdStyle");
+                        if (oVal != null)
+                        {
+                            osdStyle = (int)oVal;
+                            if (osdStyle < 0 || osdStyle > 2) osdStyle = 0;
                         }
 
                         var rVal = key.GetValue("RefreshInterval");
@@ -1909,6 +2524,10 @@ namespace RazerBatteryTray
             catch { }
 
             bool autoStart = IsAutoStartEnabled();
+            if (autoStart)
+            {
+                SyncAutoStartRegistry();
+            }
 
             isUpdatingUI = true;
             try
@@ -1917,11 +2536,29 @@ namespace RazerBatteryTray
                 if (chkLowAlert != null) chkLowAlert.Checked = lowBatteryAlertEnabled;
                 if (chkDpiOsd != null) chkDpiOsd.Checked = dpiOsdEnabled;
                 if (chkAutoStart != null) chkAutoStart.Checked = autoStart;
+                if (chkAutoStartShowUI != null)
+                {
+                    chkAutoStartShowUI.Checked = autoStartShowMainWindow;
+                    chkAutoStartShowUI.Enabled = autoStart;
+                }
+                if (autoStartShowUIMenuItem != null)
+                {
+                    autoStartShowUIMenuItem.Checked = autoStartShowMainWindow;
+                    autoStartShowUIMenuItem.Enabled = autoStart;
+                }
 
                 if (styleCapsuleItem != null) styleCapsuleItem.Checked = (trayStyle == 0);
                 if (styleNumItem != null) styleNumItem.Checked = (trayStyle == 1);
                 if (btnStyleCapsule != null) btnStyleCapsule.Selected = (trayStyle == 0);
                 if (btnStyleNum != null) btnStyleNum.Selected = (trayStyle == 1);
+
+                if (osdForm != null) osdForm.OsdStyle = osdStyle;
+                if (osdStyleCapsuleItem != null) osdStyleCapsuleItem.Checked = (osdStyle == 0);
+                if (osdStyleGaugeItem != null) osdStyleGaugeItem.Checked = (osdStyle == 1);
+                if (osdStyleCompactItem != null) osdStyleCompactItem.Checked = (osdStyle == 2);
+                if (btnOsdStyleCapsule != null) btnOsdStyleCapsule.Selected = (osdStyle == 0);
+                if (btnOsdStyleGauge != null) btnOsdStyleGauge.Selected = (osdStyle == 1);
+                if (btnOsdStyleCompact != null) btnOsdStyleCompact.Selected = (osdStyle == 2);
 
                 if (int30sMenuItem != null) int30sMenuItem.Checked = (userSelectedInterval == 30000);
                 if (int1mMenuItem != null) int1mMenuItem.Checked = (userSelectedInterval == 60000);
@@ -1946,7 +2583,9 @@ namespace RazerBatteryTray
                     {
                         key.SetValue("LowBatteryAlert", lowBatteryAlertEnabled ? 1 : 0);
                         key.SetValue("DpiOsdAlert", dpiOsdEnabled ? 1 : 0);
+                        key.SetValue("AutoStartShowUI", autoStartShowMainWindow ? 1 : 0);
                         key.SetValue("TrayIconStyle", trayStyle);
+                        key.SetValue("OsdStyle", osdStyle);
                         key.SetValue("RefreshInterval", userSelectedInterval);
                     }
                 }
@@ -1971,6 +2610,30 @@ namespace RazerBatteryTray
             return false;
         }
 
+        private void SyncAutoStartRegistry()
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(RunRegistryKey, true))
+                {
+                    if (key != null)
+                    {
+                        var val = key.GetValue(AppName) as string;
+                        if (!string.IsNullOrEmpty(val))
+                        {
+                            string exePath = Application.ExecutablePath;
+                            string expected = "\"" + exePath + "\" --autostart";
+                            if (!string.Equals(val.Trim(), expected, StringComparison.OrdinalIgnoreCase))
+                            {
+                                key.SetValue(AppName, expected);
+                            }
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
         private void SetAutoStart(bool enabled, bool showNotification = false)
         {
             try
@@ -1982,7 +2645,7 @@ namespace RazerBatteryTray
                         if (enabled)
                         {
                             string exePath = Application.ExecutablePath;
-                            key.SetValue(AppName, "\"" + exePath + "\"");
+                            key.SetValue(AppName, "\"" + exePath + "\" --autostart");
                         }
                         else
                         {
@@ -2002,6 +2665,8 @@ namespace RazerBatteryTray
             {
                 UpdateMenuStatusTexts();
                 if (chkAutoStart != null && chkAutoStart.Checked != enabled) chkAutoStart.Checked = enabled;
+                if (chkAutoStartShowUI != null) chkAutoStartShowUI.Enabled = enabled;
+                if (autoStartShowUIMenuItem != null) autoStartShowUIMenuItem.Enabled = enabled;
             }
             finally
             {
@@ -2020,6 +2685,32 @@ namespace RazerBatteryTray
                 }
             }
         }
+
+        private void SetAutoStartShowUI(bool showUI, bool showNotification = false)
+        {
+            autoStartShowMainWindow = showUI;
+            SaveConfig();
+
+            isUpdatingUI = true;
+            try
+            {
+                if (chkAutoStartShowUI != null && chkAutoStartShowUI.Checked != showUI) chkAutoStartShowUI.Checked = showUI;
+                if (autoStartShowUIMenuItem != null) autoStartShowUIMenuItem.Checked = showUI;
+            }
+            finally
+            {
+                isUpdatingUI = false;
+            }
+
+            if (showNotification && trayIcon != null)
+            {
+                if (showUI)
+                    trayIcon.ShowBalloonTip(1500, "开机行为已更新", "开机启动时将自动显示主窗口面板。", ToolTipIcon.Info);
+                else
+                    trayIcon.ShowBalloonTip(1500, "开机行为已更新", "开机启动时将保持静默，仅常驻系统托盘。", ToolTipIcon.Info);
+            }
+        }
+
 
         private void SetLowBatteryAlert(bool enabled, bool showNotification = false)
         {
@@ -2073,22 +2764,21 @@ namespace RazerBatteryTray
 
             string dpiPart = lastInfo.Dpi > 0 ? (" · " + lastInfo.Dpi + " DPI") : "";
             string ratePart = lastInfo.PollingRate > 0 ? (" · " + lastInfo.PollingRate + "Hz") : "";
-            string chgPart = lastInfo.IsCharging ? "充电中" : "正常供电";
-
-            string menuStatus = string.Format("{0} ({1}% · {2}{3}{4})", lastInfo.DeviceName, lastInfo.BatteryPercent, chgPart, dpiPart, ratePart);
+            string chgPart = lastInfo.IsSleeping ? "休眠待机" : (lastInfo.IsCharging ? "充电中" : "电池供电");
+            string menuStatus = string.Format("{0} ({1}% · {2})", lastInfo.DeviceName, lastInfo.BatteryPercent, chgPart);
             statusMenuItem.Text = menuStatus;
 
             string timeStr = lastInfo.LastUpdated.ToString("HH:mm:ss");
-            string chgStr = lastInfo.IsCharging ? "正在充电" : "电池供电";
+            string chgStr = lastInfo.IsSleeping ? "休眠待机 (移动唤醒)" : (lastInfo.IsCharging ? "正在充电" : "电池供电");
             string tipText = string.Format("雷蛇电量管家\n{0} · {1}%\n状态: {2}{3}{4}\n最后同步: {5}",
                 lastInfo.DeviceName, lastInfo.BatteryPercent, chgStr, dpiPart, ratePart, timeStr);
 
             if (tipText.Length > 63)
             {
-                tipText = string.Format("{0}: {1}%\n{2}{3}{4}", lastInfo.DeviceName, lastInfo.BatteryPercent, chgStr, dpiPart, ratePart);
+                tipText = string.Format("{0}: {1}%\n{2}{3}", lastInfo.DeviceName, lastInfo.BatteryPercent, chgStr, dpiPart);
                 if (tipText.Length > 63)
                 {
-                    tipText = string.Format("电量: {0}% ({1})", lastInfo.BatteryPercent, chgStr);
+                    tipText = string.Format("电量: {0}% ({1})", lastInfo.BatteryPercent, chgPart);
                 }
             }
             trayIcon.Text = tipText;
@@ -2098,6 +2788,7 @@ namespace RazerBatteryTray
         {
             if (info == null || !info.IsConnected)
             {
+                isMouseSleeping = false;
                 if (updateTimer != null) updateTimer.Interval = 3000;
 
                 lblDeviceName.Text = "未检测到雷蛇鼠标";
@@ -2108,14 +2799,13 @@ namespace RazerBatteryTray
                 lblBatteryBig.ForeColor = Color.FromArgb(140, 145, 155);
 
                 pillStatus.SetStatus("未连接", Color.FromArgb(140, 145, 155));
-                pillDpi.SetStatus("-- DPI", Color.FromArgb(140, 145, 155));
-                pillRate.SetStatus("-- Hz", Color.FromArgb(140, 145, 155));
+                pillStatus.Location = new Point(lblBatteryBig.Right + (int)(16 * dpiScale), (int)(60 * dpiScale));
 
                 barBattery.Value = 0;
                 lblUpdateTime.Text = "最后同步: " + DateTime.Now.ToString("HH:mm:ss") + " · 未检测到设备";
 
-                statusMenuItem.Text = "未检测到雷蛇鼠标 (未连接/休眠)";
-                trayIcon.Text = "未检测到雷蛇鼠标 (休眠或未连接)";
+                statusMenuItem.Text = "未检测到雷蛇鼠标 (未连接)";
+                trayIcon.Text = "未检测到雷蛇鼠标 (未连接)";
                 UpdateTrayIcon(-1, false, false);
                 lastLowAlertFired = false;
                 if (showTipIfManual)
@@ -2125,6 +2815,84 @@ namespace RazerBatteryTray
                 return;
             }
 
+            // Absolute safety guard: connected mouse should NEVER show 0% (indicates sleep / no telemetry)
+            if (info.BatteryPercent <= 0)
+            {
+                if (RazerDeviceHelper.CachedBatteryPercent > 0)
+                {
+                    info.BatteryPercent = RazerDeviceHelper.CachedBatteryPercent;
+                }
+                else
+                {
+                    info.BatteryPercent = 50;
+                }
+                info.IsSleeping = true;
+            }
+
+            if (info.IsSleeping)
+            {
+                isMouseSleeping = true;
+                if (updateTimer != null) updateTimer.Interval = userSelectedInterval;
+
+                Color sleepColor = Color.FromArgb(255, 183, 77); // Warm amber
+                lblDeviceName.Text = info.DeviceName;
+                lblConnDot.Text = "◐ 休眠待机";
+                lblConnDot.ForeColor = sleepColor;
+
+                lblBatteryBig.Text = info.BatteryPercent + "%";
+                lblBatteryBig.ForeColor = Color.FromArgb(220, 225, 235);
+
+                pillStatus.SetStatus("休眠待机", sleepColor);
+                pillStatus.Location = new Point(lblBatteryBig.Right + (int)(16 * dpiScale), (int)(60 * dpiScale));
+
+                barBattery.Value = info.BatteryPercent;
+                barBattery.ProgressColor = sleepColor;
+
+                string timeStr = info.LastUpdated.ToString("HH:mm:ss");
+                lblUpdateTime.Text = "最后同步: " + timeStr + " · 移动鼠标即刻唤醒";
+
+                // Update Performance Card with cached stages
+                if (info.DpiStages != null && info.DpiStages.Length > 0)
+                {
+                    dpiStageValues = info.DpiStages;
+                    for (int i = 0; i < btnDpiStages.Length; i++)
+                    {
+                        if (i < dpiStageValues.Length)
+                        {
+                            btnDpiStages[i].Text = dpiStageValues[i].ToString();
+                            btnDpiStages[i].Selected = (dpiStageValues[i] == info.Dpi);
+                            btnDpiStages[i].Visible = true;
+                        }
+                        else
+                        {
+                            btnDpiStages[i].Visible = false;
+                        }
+                    }
+                }
+
+                if (info.PollingRate > 0)
+                {
+                    for (int i = 0; i < btnRates.Length; i++)
+                    {
+                        if (i < pollingRateValues.Length)
+                        {
+                            btnRates[i].Selected = (pollingRateValues[i] == info.PollingRate);
+                        }
+                    }
+                }
+
+                UpdateStatusDisplay();
+                UpdateTrayIcon(info.BatteryPercent, false, true, true);
+
+                if (showTipIfManual)
+                {
+                    trayIcon.ShowBalloonTip(1500, info.DeviceName, string.Format("电量: {0}% (休眠待机)\n移动鼠标将即刻恢复工作", info.BatteryPercent), ToolTipIcon.Info);
+                }
+                return;
+            }
+
+            // Normal awake state
+            isMouseSleeping = false;
             if (updateTimer != null) updateTimer.Interval = userSelectedInterval;
 
             Color accentColor;
@@ -2144,21 +2912,13 @@ namespace RazerBatteryTray
             lblBatteryBig.ForeColor = accentColor;
 
             pillStatus.SetStatus(chgStr, accentColor);
-
-            if (info.Dpi > 0)
-            {
-                pillDpi.SetStatus(info.Dpi + " DPI", Color.FromArgb(0, 200, 255));
-            }
-            if (info.PollingRate > 0)
-            {
-                pillRate.SetStatus(info.PollingRate + " Hz", Color.FromArgb(255, 214, 0));
-            }
+            pillStatus.Location = new Point(lblBatteryBig.Right + (int)(16 * dpiScale), (int)(60 * dpiScale));
 
             barBattery.Value = info.BatteryPercent;
             barBattery.ProgressColor = accentColor;
 
-            string timeStr = info.LastUpdated.ToString("HH:mm:ss");
-            lblUpdateTime.Text = "最后同步: " + timeStr + " · 自动侦测硬件插拔";
+            string normalTimeStr = info.LastUpdated.ToString("HH:mm:ss");
+            lblUpdateTime.Text = "最后同步: " + normalTimeStr + " · 自动侦测硬件插拔";
 
             // Update Performance Card dynamic stages
             if (info.DpiStages != null && info.DpiStages.Length > 0)
@@ -2217,7 +2977,7 @@ namespace RazerBatteryTray
             }
 
             UpdateStatusDisplay();
-            UpdateTrayIcon(info.BatteryPercent, info.IsCharging, true);
+            UpdateTrayIcon(info.BatteryPercent, info.IsCharging, true, false);
 
             if (lowBatteryAlertEnabled && !info.IsCharging)
             {
@@ -2242,7 +3002,7 @@ namespace RazerBatteryTray
             if (showTipIfManual)
             {
                 string perfTip = (info.Dpi > 0 && info.PollingRate > 0) ? string.Format("\n性能: {0} DPI · {1} Hz", info.Dpi, info.PollingRate) : "";
-                trayIcon.ShowBalloonTip(1500, info.DeviceName, string.Format("电量: {0}% ({1}){2}\n更新时间: {3}", info.BatteryPercent, chgStr, perfTip, timeStr), ToolTipIcon.Info);
+                trayIcon.ShowBalloonTip(1500, info.DeviceName, string.Format("电量: {0}% ({1}){2}\n更新时间: {3}", info.BatteryPercent, chgStr, perfTip, normalTimeStr), ToolTipIcon.Info);
             }
         }
 
@@ -2254,284 +3014,399 @@ namespace RazerBatteryTray
         {
             try
             {
-                int sz = GetSystemMetrics(SM_CXSMICON);
-                if (sz >= 16) return sz;
+                int size = GetSystemMetrics(SM_CXSMICON);
+                if (size >= 24) return 24;
+                if (size >= 20) return 20;
+                return 16;
             }
-            catch { }
-            return 32;
+            catch
+            {
+                return 16;
+            }
         }
 
-        private void UpdateTrayIcon(int batteryPercent, bool isCharging, bool isConnected)
+        private void UpdateTrayIcon(int percent, bool isCharging, bool isConnected, bool isSleeping = false)
         {
-            try
+            int iconSize = GetTrayIconSize();
+            using (Bitmap bmp = DrawTrayBitmap(percent, isCharging, isConnected, trayStyle, iconSize, isSleeping))
             {
-                int iconSize = GetTrayIconSize();
-                if (iconSize < 32) iconSize = 32;
-
-                using (Bitmap bmp = new Bitmap(iconSize, iconSize))
-                using (Graphics g = Graphics.FromImage(bmp))
+                IntPtr hIcon = bmp.GetHicon();
+                try
                 {
-                    g.SmoothingMode = SmoothingMode.AntiAlias;
-                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                    g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-                    g.Clear(Color.Transparent);
-
-                    if (!isConnected)
+                    using (Icon tempIcon = Icon.FromHandle(hIcon))
                     {
-                        DrawDisconnectedTrayIcon(g, iconSize);
+                        trayIcon.Icon = (Icon)tempIcon.Clone();
                     }
-                    else if (trayStyle == 1)
+                }
+                finally
+                {
+                    DestroyIcon(hIcon);
+                }
+            }
+        }
+
+        private static readonly byte[][] Digits3 = new byte[][] {
+            new byte[] { 0x7, 0x5, 0x5, 0x5, 0x7 }, // 0
+            new byte[] { 0x1, 0x3, 0x1, 0x1, 0x1 }, // 1 (width 2, or 1 in 100)
+            new byte[] { 0x7, 0x1, 0x7, 0x4, 0x7 }, // 2
+            new byte[] { 0x7, 0x1, 0x7, 0x1, 0x7 }, // 3
+            new byte[] { 0x5, 0x5, 0x7, 0x1, 0x1 }, // 4
+            new byte[] { 0x7, 0x4, 0x7, 0x1, 0x7 }, // 5
+            new byte[] { 0x7, 0x4, 0x7, 0x5, 0x7 }, // 6
+            new byte[] { 0x7, 0x1, 0x1, 0x1, 0x1 }, // 7
+            new byte[] { 0x7, 0x5, 0x7, 0x5, 0x7 }, // 8
+            new byte[] { 0x7, 0x5, 0x7, 0x1, 0x7 }, // 9
+        };
+
+        private static readonly byte[][] Digits4x7 = new byte[][] {
+            new byte[] { 0x6, 0x9, 0x9, 0x9, 0x9, 0x9, 0x6 }, // 0
+            new byte[] { 0x2, 0x6, 0x2, 0x2, 0x2, 0x2, 0x7 }, // 1 (width 3)
+            new byte[] { 0x6, 0x9, 0x1, 0x2, 0x4, 0x8, 0xF }, // 2
+            new byte[] { 0xE, 0x1, 0x1, 0x6, 0x1, 0x1, 0xE }, // 3
+            new byte[] { 0x9, 0x9, 0x9, 0xF, 0x1, 0x1, 0x1 }, // 4
+            new byte[] { 0xF, 0x8, 0xE, 0x1, 0x1, 0x9, 0x6 }, // 5
+            new byte[] { 0x6, 0x8, 0xE, 0x9, 0x9, 0x9, 0x6 }, // 6
+            new byte[] { 0xF, 0x1, 0x2, 0x2, 0x4, 0x4, 0x4 }, // 7
+            new byte[] { 0x6, 0x9, 0x9, 0x6, 0x9, 0x9, 0x6 }, // 8
+            new byte[] { 0x6, 0x9, 0x9, 0x7, 0x1, 0x1, 0x6 }, // 9
+        };
+
+        private static Bitmap DrawTrayBitmap(int percent, bool isCharging, bool isConnected, int style, int iconSize, bool isSleeping = false)
+        {
+            if (iconSize >= 24)
+            {
+                return DrawTrayBitmap24(percent, isCharging, isConnected, style, isSleeping);
+            }
+            else
+            {
+                return DrawTrayBitmap16(percent, isCharging, isConnected, style, isSleeping);
+            }
+        }
+
+        private static Bitmap DrawTrayBitmap24(int percent, bool isCharging, bool isConnected, int style, bool isSleeping = false)
+        {
+            Bitmap bmp = new Bitmap(24, 24);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.Transparent);
+                if (!isConnected)
+                {
+                    Color whiteCol = Color.White;
+                    using (SolidBrush bg = new SolidBrush(Color.FromArgb(18, 22, 30)))
                     {
-                        DrawNumberBadgeTrayIcon(g, iconSize, batteryPercent, isCharging);
+                        g.FillRectangle(bg, 2, 4, 18, 16);
+                    }
+                    using (Pen p = new Pen(whiteCol, 1f))
+                    {
+                        g.DrawLine(p, 2, 3, 19, 3);
+                        g.DrawLine(p, 2, 20, 19, 20);
+                        g.DrawLine(p, 1, 4, 1, 19);
+                        g.DrawLine(p, 20, 4, 20, 19);
+                        bmp.SetPixel(1, 3, whiteCol);
+                        bmp.SetPixel(1, 20, whiteCol);
+                        bmp.SetPixel(20, 3, whiteCol);
+                        bmp.SetPixel(20, 20, whiteCol);
+                    }
+                    using (SolidBrush cap = new SolidBrush(whiteCol))
+                    {
+                        g.FillRectangle(cap, 21, 8, 2, 8);
+                    }
+                    DrawQuestionMark24(bmp, 10, 8, Color.FromArgb(160, 165, 180));
+                    return bmp;
+                }
+
+                Color accentColor = isSleeping ? Color.FromArgb(255, 183, 77) :
+                                    ((percent > 40 || isCharging) ? Color.FromArgb(0, 230, 118) :
+                                    ((percent > 20) ? Color.FromArgb(255, 214, 0) : Color.FromArgb(255, 50, 65)));
+
+                if (style == 1) // 醒目数字能量表 (Centered digits)
+                {
+                    using (SolidBrush bg = new SolidBrush(Color.FromArgb(20, 23, 30)))
+                        g.FillRectangle(bg, 0, 0, 24, 24);
+                    using (Pen border = new Pen(Color.FromArgb(48, 56, 74), 1f))
+                        g.DrawRectangle(border, 0, 0, 23, 23);
+
+                    if (isCharging)
+                        DrawBolt24(bmp, 11, 10, Color.White);
+                    else
+                        DrawDigits24(bmp, percent, 11, 5, Color.White, false);
+
+                    int barW = Math.Max(2, (int)(18 * (percent / 100.0)));
+                    using (SolidBrush barB = new SolidBrush(accentColor))
+                        g.FillRectangle(barB, 3, 17, barW, 4);
+                }
+                else // 现代胶囊电池 (Default, sealed closed white corners)
+                {
+                    Color whiteCol = Color.White;
+
+                    using (SolidBrush bg = new SolidBrush(Color.FromArgb(18, 22, 30)))
+                        g.FillRectangle(bg, 2, 4, 18, 16);
+
+                    int fillW = Math.Max(1, (int)(18 * (percent / 100.0)));
+                    using (SolidBrush fb = new SolidBrush(accentColor))
+                        g.FillRectangle(fb, 2, 4, fillW, 16);
+
+                    if (isCharging)
+                        DrawBolt24(bmp, 10, 11, Color.White);
+                    else
+                        DrawDigits24(bmp, percent, 10, 8, Color.White, true);
+
+                    using (Pen p = new Pen(whiteCol, 1f))
+                    {
+                        g.DrawLine(p, 2, 3, 19, 3);
+                        g.DrawLine(p, 2, 20, 19, 20);
+                        g.DrawLine(p, 1, 4, 1, 19);
+                        g.DrawLine(p, 20, 4, 20, 19);
+                    }
+                    bmp.SetPixel(1, 3, whiteCol);
+                    bmp.SetPixel(1, 20, whiteCol);
+                    bmp.SetPixel(20, 3, whiteCol);
+                    bmp.SetPixel(20, 20, whiteCol);
+
+                    using (SolidBrush cap = new SolidBrush(whiteCol))
+                        g.FillRectangle(cap, 21, 8, 2, 8);
+                }
+            }
+            return bmp;
+        }
+
+        private static Bitmap DrawTrayBitmap16(int percent, bool isCharging, bool isConnected, int style, bool isSleeping = false)
+        {
+            Bitmap bmp = new Bitmap(16, 16);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.Transparent);
+                if (!isConnected)
+                {
+                    Color whiteCol = Color.White;
+                    using (SolidBrush bg = new SolidBrush(Color.FromArgb(18, 22, 30)))
+                        g.FillRectangle(bg, 1, 3, 12, 10);
+                    using (Pen p = new Pen(whiteCol, 1f))
+                    {
+                        g.DrawLine(p, 1, 2, 12, 2);
+                        g.DrawLine(p, 1, 13, 12, 13);
+                        g.DrawLine(p, 0, 3, 0, 12);
+                        g.DrawLine(p, 13, 3, 13, 12);
+                    }
+                    bmp.SetPixel(0, 2, whiteCol);
+                    bmp.SetPixel(0, 13, whiteCol);
+                    bmp.SetPixel(13, 2, whiteCol);
+                    bmp.SetPixel(13, 13, whiteCol);
+                    using (SolidBrush cap = new SolidBrush(whiteCol))
+                        g.FillRectangle(cap, 14, 5, 2, 6);
+                    DrawQuestionMark16(bmp, 6, 5, Color.FromArgb(160, 165, 180));
+                    return bmp;
+                }
+
+                Color accentColor = isSleeping ? Color.FromArgb(255, 183, 77) :
+                                    ((percent > 40 || isCharging) ? Color.FromArgb(0, 230, 118) :
+                                    ((percent > 20) ? Color.FromArgb(255, 214, 0) : Color.FromArgb(255, 50, 65)));
+
+                if (style == 1) // 醒目数字能量表 (Centered digits)
+                {
+                    using (SolidBrush bg = new SolidBrush(Color.FromArgb(20, 23, 30)))
+                        g.FillRectangle(bg, 0, 0, 16, 16);
+                    using (Pen border = new Pen(Color.FromArgb(48, 56, 74), 1f))
+                        g.DrawRectangle(border, 0, 0, 15, 15);
+
+                    if (isCharging)
+                    {
+                        bmp.SetPixel(14, 1, Color.FromArgb(0, 255, 136));
+                        bmp.SetPixel(13, 2, Color.FromArgb(0, 255, 136));
+                        bmp.SetPixel(14, 2, Color.FromArgb(0, 255, 136));
+                        bmp.SetPixel(13, 3, Color.FromArgb(0, 255, 136));
+                        DrawBolt16(bmp, 6, 4, Color.White);
                     }
                     else
                     {
-                        DrawModernCapsuleTrayIcon(g, iconSize, batteryPercent, isCharging);
+                        DrawDigits16(bmp, percent, 7, 3, Color.White, false);
                     }
 
-                    IntPtr hIcon = bmp.GetHicon();
-                    try
+                    int barW = Math.Max(2, (int)(12 * (percent / 100.0)));
+                    using (SolidBrush barB = new SolidBrush(accentColor))
+                        g.FillRectangle(barB, 2, 12, barW, 3);
+                }
+                else // 现代胶囊电池 (Default, sealed closed white corners)
+                {
+                    Color whiteCol = Color.White;
+
+                    using (SolidBrush bg = new SolidBrush(Color.FromArgb(18, 22, 30)))
+                        g.FillRectangle(bg, 1, 3, 12, 10);
+
+                    int fillW = Math.Max(1, (int)(12 * (percent / 100.0)));
+                    using (SolidBrush fb = new SolidBrush(accentColor))
+                        g.FillRectangle(fb, 1, 3, fillW, 10);
+
+                    if (isCharging)
+                        DrawBolt16(bmp, 6, 5, Color.White);
+                    else
+                        DrawDigits16(bmp, percent, 7, 5, Color.White, true);
+
+                    using (Pen p = new Pen(whiteCol, 1f))
                     {
-                        Icon newIcon = Icon.FromHandle(hIcon);
-                        trayIcon.Icon = newIcon;
+                        g.DrawLine(p, 1, 2, 12, 2);
+                        g.DrawLine(p, 1, 13, 12, 13);
+                        g.DrawLine(p, 0, 3, 0, 12);
+                        g.DrawLine(p, 13, 3, 13, 12);
                     }
-                    finally
-                    {
-                        DestroyIcon(hIcon);
-                    }
+                    bmp.SetPixel(0, 2, whiteCol);
+                    bmp.SetPixel(0, 13, whiteCol);
+                    bmp.SetPixel(13, 2, whiteCol);
+                    bmp.SetPixel(13, 13, whiteCol);
+
+                    using (SolidBrush cap = new SolidBrush(whiteCol))
+                        g.FillRectangle(cap, 14, 5, 2, 6);
                 }
             }
-            catch { }
+            return bmp;
         }
 
-        private void DrawDisconnectedTrayIcon(Graphics g, int sz)
+
+        private static void DrawDigits24(Bitmap bmp, int value, int centerX, int startY, Color color, bool smartContrast = false)
         {
-            int bodyW = sz - 8;
-            int bodyH = (int)(sz * 0.52f);
-            int bodyX = 2;
-            int bodyY = (sz - bodyH) / 2;
-
-            using (GraphicsPath p = RoundedCard.GetRoundedRectangle(new Rectangle(bodyX, bodyY, bodyW, bodyH), 4))
+            string s = value.ToString();
+            int totalW = 0;
+            int[] widths = new int[s.Length];
+            for (int i = 0; i < s.Length; i++)
             {
-                using (Pen pen = new Pen(Color.FromArgb(130, 138, 150), 1.8f))
-                {
-                    pen.DashStyle = DashStyle.Dash;
-                    g.DrawPath(pen, p);
-                }
+                int d = s[i] - '0';
+                int w = (d == 1) ? 3 : 4;
+                widths[i] = w;
+                totalW += w;
             }
+            totalW += s.Length - 1;
 
-            int capW = 3;
-            int capH = (int)(bodyH * 0.44f);
-            int capX = bodyX + bodyW + 1;
-            int capY = bodyY + (bodyH - capH) / 2;
-            using (GraphicsPath cp = RoundedCard.GetRoundedRectangle(new Rectangle(capX, capY, capW, capH), 1))
-            using (SolidBrush b = new SolidBrush(Color.FromArgb(130, 138, 150)))
+            int curX = centerX - (totalW / 2);
+            for (int i = 0; i < s.Length; i++)
             {
-                g.FillPath(b, cp);
-            }
-
-            using (Font f = new Font("Arial", sz * 0.38f, FontStyle.Bold))
-            using (SolidBrush b = new SolidBrush(Color.FromArgb(160, 170, 185)))
-            {
-                StringFormat sf = new StringFormat();
-                sf.Alignment = StringAlignment.Center;
-                sf.LineAlignment = StringAlignment.Center;
-                g.DrawString("?", f, b, new RectangleF(bodyX, bodyY - 1, bodyW, bodyH), sf);
-            }
-        }
-
-        private void DrawModernCapsuleTrayIcon(Graphics g, int sz, int percent, bool isCharging)
-        {
-            Color levelColor;
-            if (isCharging) levelColor = Color.FromArgb(0, 230, 118);
-            else if (percent > 40) levelColor = Color.FromArgb(0, 230, 118);
-            else if (percent > 20) levelColor = Color.FromArgb(255, 214, 0);
-            else levelColor = Color.FromArgb(255, 45, 85);
-
-            int bodyW = sz - 8;
-            int bodyH = (int)(sz * 0.52f);
-            int bodyX = 2;
-            int bodyY = (sz - bodyH) / 2;
-
-            using (GraphicsPath p = RoundedCard.GetRoundedRectangle(new Rectangle(bodyX, bodyY, bodyW, bodyH), 4))
-            {
-                using (SolidBrush bg = new SolidBrush(Color.FromArgb(210, 14, 16, 22)))
+                int d = s[i] - '0';
+                int w = widths[i];
+                byte[] rows = Digits4x7[d];
+                for (int r = 0; r < 7; r++)
                 {
-                    g.FillPath(bg, p);
-                }
-                using (Pen pen = new Pen(Color.White, 2.0f))
-                {
-                    g.DrawPath(pen, p);
-                }
-            }
-
-            int capW = 3;
-            int capH = (int)(bodyH * 0.44f);
-            int capX = bodyX + bodyW + 1;
-            int capY = bodyY + (bodyH - capH) / 2;
-            using (GraphicsPath cp = RoundedCard.GetRoundedRectangle(new Rectangle(capX, capY, capW, capH), 1))
-            using (SolidBrush b = new SolidBrush(Color.White))
-            {
-                g.FillPath(b, cp);
-            }
-
-            int innerPad = 2;
-            int innerW = bodyW - (innerPad * 2) - 2;
-            int innerH = bodyH - (innerPad * 2) - 2;
-            int fillW = (int)(innerW * (percent / 100.0f));
-            if (percent > 0 && fillW < 2) fillW = 2;
-
-            if (fillW > 0)
-            {
-                Rectangle fillRect = new Rectangle(bodyX + innerPad + 1, bodyY + innerPad + 1, fillW, innerH);
-                using (GraphicsPath fp = RoundedCard.GetRoundedRectangle(fillRect, 2))
-                using (SolidBrush b = new SolidBrush(Color.FromArgb(140, levelColor.R, levelColor.G, levelColor.B)))
-                {
-                    g.FillPath(b, fp);
-                }
-            }
-
-            if (isCharging)
-            {
-                float cx = bodyX + (bodyW / 2.0f);
-                float cy = bodyY + (bodyH / 2.0f);
-                float bh = bodyH * 0.85f;
-                float bw = bh * 0.50f;
-
-                PointF[] bolt = new PointF[]
-                {
-                    new PointF(cx + (bw * 0.1f), cy - (bh * 0.5f)),
-                    new PointF(cx - (bw * 0.5f), cy + (bh * 0.05f)),
-                    new PointF(cx - (bw * 0.05f), cy + (bh * 0.05f)),
-                    new PointF(cx - (bw * 0.15f), cy + (bh * 0.5f)),
-                    new PointF(cx + (bw * 0.5f), cy - (bh * 0.05f)),
-                    new PointF(cx + (bw * 0.05f), cy - (bh * 0.05f))
-                };
-
-                using (GraphicsPath bp = new GraphicsPath())
-                {
-                    bp.AddPolygon(bolt);
-                    using (Pen glowPen = new Pen(Color.FromArgb(200, 0, 0, 0), 2.2f))
+                    byte row = rows[r];
+                    for (int c = 0; c < w; c++)
                     {
-                        glowPen.LineJoin = LineJoin.Round;
-                        g.DrawPath(glowPen, bp);
-                    }
-                    using (SolidBrush boltBrush = new SolidBrush(Color.FromArgb(0, 255, 136)))
-                    {
-                        g.FillPath(boltBrush, bp);
-                    }
-                }
-            }
-            else
-            {
-                string text = percent.ToString();
-                float fontSize = (sz >= 32) ? (bodyH * 0.65f) : (bodyH * 0.72f);
-                using (Font f = new Font("Arial", fontSize, FontStyle.Bold, GraphicsUnit.Pixel))
-                {
-                    RectangleF textRect = new RectangleF(bodyX, bodyY, bodyW, bodyH);
-                    StringFormat sf = new StringFormat();
-                    sf.Alignment = StringAlignment.Center;
-                    sf.LineAlignment = StringAlignment.Center;
-
-                    using (GraphicsPath textPath = new GraphicsPath())
-                    {
-                        textPath.AddString(text, f.FontFamily, (int)f.Style, f.Size, textRect, sf);
-                        using (Pen outline = new Pen(Color.FromArgb(220, 0, 0, 0), 2.4f))
+                        int bit = (w == 3) ? (2 - c) : (3 - c);
+                        if ((row & (1 << bit)) != 0)
                         {
-                            outline.LineJoin = LineJoin.Round;
-                            g.DrawPath(outline, textPath);
-                        }
-                        using (SolidBrush fill = new SolidBrush(Color.White))
-                        {
-                            g.FillPath(fill, textPath);
+                            int px = curX + c;
+                            int py = startY + r;
+                            if (px >= 0 && px < bmp.Width && py >= 0 && py < bmp.Height)
+                            {
+                                Color drawCol = color;
+                                if (smartContrast)
+                                {
+                                    Color bg = bmp.GetPixel(px, py);
+                                    int lum = (int)(bg.R * 0.299 + bg.G * 0.587 + bg.B * 0.114);
+                                    drawCol = (lum > 110) ? Color.FromArgb(10, 24, 15) : Color.White;
+                                }
+                                bmp.SetPixel(px, py, drawCol);
+                            }
                         }
                     }
                 }
+                curX += w + 1;
             }
         }
 
-        private void DrawNumberBadgeTrayIcon(Graphics g, int sz, int percent, bool isCharging)
+        private static void DrawBolt24(Bitmap bmp, int cx, int cy, Color color)
         {
-            Color accentColor;
-            if (isCharging) accentColor = Color.FromArgb(0, 230, 118);
-            else if (percent > 40) accentColor = Color.FromArgb(0, 230, 118);
-            else if (percent > 20) accentColor = Color.FromArgb(255, 214, 0);
-            else accentColor = Color.FromArgb(255, 45, 85);
-
-            float cx = sz / 2.0f;
-            float cy = sz / 2.0f;
-
-            string text = percent.ToString();
-            float fontSize;
-            if (percent == 100)
+            Point[] pts = new Point[] {
+                new Point(cx + 1, cy - 5), new Point(cx - 3, cy), new Point(cx, cy),
+                new Point(cx - 2, cy + 5), new Point(cx + 3, cy - 1), new Point(cx, cy - 1)
+            };
+            using (Graphics g = Graphics.FromImage(bmp))
+            using (SolidBrush b = new SolidBrush(color))
             {
-                fontSize = sz * 0.44f;
+                g.FillPolygon(b, pts);
             }
-            else if (percent >= 10)
+        }
+
+        private static void DrawQuestionMark24(Bitmap bmp, int cx, int cy, Color color)
+        {
+            int[,] qPts = new int[,] { {0,0}, {1,0}, {2,0}, {3,0}, {3,1}, {3,2}, {2,3}, {1,4}, {1,6} };
+            for (int i = 0; i < qPts.GetLength(0); i++)
             {
-                fontSize = sz * 0.54f;
+                int px = cx + qPts[i, 0];
+                int py = cy + qPts[i, 1];
+                if (px >= 0 && px < bmp.Width && py >= 0 && py < bmp.Height)
+                    bmp.SetPixel(px, py, color);
             }
-            else
+        }
+
+        private static void DrawDigits16(Bitmap bmp, int value, int centerX, int startY, Color color, bool smartContrast = false)
+        {
+            string s = value.ToString();
+            int totalW = 0;
+            for (int i = 0; i < s.Length; i++)
             {
-                fontSize = sz * 0.62f;
+                int d = s[i] - '0';
+                int w = (d == 1 && s.Length == 3) ? 1 : (d == 1 ? 2 : 3);
+                totalW += w;
+                if (i < s.Length - 1) totalW += 1;
             }
 
-            using (Font f = new Font("Arial", fontSize, FontStyle.Bold, GraphicsUnit.Pixel))
+            int curX = centerX - (totalW / 2);
+            for (int i = 0; i < s.Length; i++)
             {
-                StringFormat sf = new StringFormat();
-                sf.Alignment = StringAlignment.Center;
-                sf.LineAlignment = StringAlignment.Center;
-
-                RectangleF textBounds = new RectangleF(0, 0, sz, sz);
-
-                using (GraphicsPath textPath = new GraphicsPath())
+                int d = s[i] - '0';
+                byte[] rows = Digits3[d];
+                int w = (d == 1 && s.Length == 3) ? 1 : (d == 1 ? 2 : 3);
+                for (int r = 0; r < 5; r++)
                 {
-                    textPath.AddString(text, f.FontFamily, (int)f.Style, f.Size, textBounds, sf);
-
-                    using (Pen outline = new Pen(Color.FromArgb(240, 5, 8, 12), sz * 0.14f))
+                    byte row = rows[r];
+                    for (int c = 0; c < w; c++)
                     {
-                        outline.LineJoin = LineJoin.Round;
-                        g.DrawPath(outline, textPath);
-                    }
-
-                    using (SolidBrush brush = new SolidBrush(accentColor))
-                    {
-                        g.FillPath(brush, textPath);
+                        int bit = (w == 1) ? 0 : ((w == 2) ? (1 - c) : (2 - c));
+                        if ((row & (1 << bit)) != 0)
+                        {
+                            int px = curX + c;
+                            int py = startY + r;
+                            if (px >= 0 && px < bmp.Width && py >= 0 && py < bmp.Height)
+                            {
+                                Color drawCol = color;
+                                if (smartContrast)
+                                {
+                                    Color bg = bmp.GetPixel(px, py);
+                                    int lum = (int)(bg.R * 0.299 + bg.G * 0.587 + bg.B * 0.114);
+                                    drawCol = (lum > 110) ? Color.FromArgb(10, 24, 15) : Color.White;
+                                }
+                                bmp.SetPixel(px, py, drawCol);
+                            }
+                        }
                     }
                 }
+                curX += w + 1;
             }
+        }
 
-            if (isCharging)
+        private static void DrawBolt16(Bitmap bmp, int startX, int startY, Color color)
+        {
+            int[,] bolt = new int[,] {
+                {0, 2}, {1, 1}, {2, 0},
+                {1, 2}, {2, 2}, {3, 2},
+                {0, 3}, {1, 3}, {2, 3},
+                {1, 4}, {2, 5}
+            };
+            for (int i = 0; i < bolt.GetLength(0); i++)
             {
-                float boltW = sz * 0.28f;
-                float boltH = sz * 0.38f;
-                float bx = sz - boltW - 1;
-                float by = 1;
+                int px = startX + bolt[i, 0];
+                int py = startY + bolt[i, 1];
+                if (px >= 0 && px < bmp.Width && py >= 0 && py < bmp.Height)
+                    bmp.SetPixel(px, py, color);
+            }
+        }
 
-                PointF[] bolt = new PointF[]
-                {
-                    new PointF(bx + boltW * 0.65f, by),
-                    new PointF(bx, by + boltH * 0.55f),
-                    new PointF(bx + boltW * 0.45f, by + boltH * 0.55f),
-                    new PointF(bx + boltW * 0.35f, by + boltH),
-                    new PointF(bx + boltW, by + boltH * 0.45f),
-                    new PointF(bx + boltW * 0.55f, by + boltH * 0.45f)
-                };
-
-                using (GraphicsPath bp = new GraphicsPath())
-                {
-                    bp.AddPolygon(bolt);
-                    using (Pen glow = new Pen(Color.FromArgb(240, 0, 0, 0), 2.0f))
-                    {
-                        glow.LineJoin = LineJoin.Round;
-                        g.DrawPath(glow, bp);
-                    }
-                    using (SolidBrush b = new SolidBrush(Color.FromArgb(0, 255, 136)))
-                    {
-                        g.FillPath(b, bp);
-                    }
-                }
+        private static void DrawQuestionMark16(Bitmap bmp, int cx, int cy, Color color)
+        {
+            int[,] qPts = new int[,] { {0,0}, {1,0}, {2,0}, {2,1}, {1,2}, {1,4} };
+            for (int i = 0; i < qPts.GetLength(0); i++)
+            {
+                int px = cx + qPts[i, 0];
+                int py = cy + qPts[i, 1];
+                if (px >= 0 && px < bmp.Width && py >= 0 && py < bmp.Height)
+                    bmp.SetPixel(px, py, color);
             }
         }
 
@@ -2554,6 +3429,98 @@ namespace RazerBatteryTray
     public static class RazerDeviceHelper
     {
         private static readonly object hidLock = new object();
+
+        // Hardware Cache for Standby / Sleep Retention
+        public static int CachedBatteryPercent = 0;
+        public static string CachedDeviceName = "";
+        public static int CachedDpi = 0;
+        public static int CachedDpiStage = 0;
+        public static int CachedDpiStageCount = 0;
+        public static int[] CachedDpiStages = null;
+        public static int CachedPollingRate = 0;
+        public static DateTime CachedLastUpdated = DateTime.MinValue;
+
+        private const string CacheRegistryKey = @"Software\RazerBatteryTray\HardwareCache";
+
+        public static void LoadHardwareCache()
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.OpenSubKey(CacheRegistryKey))
+                {
+                    if (key != null)
+                    {
+                        var batt = key.GetValue("BatteryPercent");
+                        if (batt != null)
+                        {
+                            int b = (int)batt;
+                            if (b > 0) CachedBatteryPercent = b;
+                        }
+
+                        var dev = key.GetValue("DeviceName");
+                        if (dev != null) CachedDeviceName = (string)dev;
+
+                        var dpi = key.GetValue("Dpi");
+                        if (dpi != null) CachedDpi = (int)dpi;
+
+                        var st = key.GetValue("DpiStage");
+                        if (st != null) CachedDpiStage = (int)st;
+
+                        var stCount = key.GetValue("DpiStageCount");
+                        if (stCount != null) CachedDpiStageCount = (int)stCount;
+
+                        var stStr = key.GetValue("DpiStages") as string;
+                        if (!string.IsNullOrEmpty(stStr))
+                        {
+                            string[] parts = stStr.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                            CachedDpiStages = new int[parts.Length];
+                            for (int i = 0; i < parts.Length; i++)
+                            {
+                                int p;
+                                if (int.TryParse(parts[i], out p)) CachedDpiStages[i] = p;
+                            }
+                        }
+
+                        var poll = key.GetValue("PollingRate");
+                        if (poll != null) CachedPollingRate = (int)poll;
+
+                        var updatedStr = key.GetValue("LastUpdated") as string;
+                        if (!string.IsNullOrEmpty(updatedStr))
+                        {
+                            DateTime dt;
+                            if (DateTime.TryParse(updatedStr, out dt)) CachedLastUpdated = dt;
+                        }
+                    }
+                }
+            }
+            catch { }
+        }
+
+        public static void SaveHardwareCache()
+        {
+            try
+            {
+                using (var key = Registry.CurrentUser.CreateSubKey(CacheRegistryKey))
+                {
+                    if (key != null)
+                    {
+                        if (CachedBatteryPercent > 0) key.SetValue("BatteryPercent", CachedBatteryPercent);
+                        if (!string.IsNullOrEmpty(CachedDeviceName)) key.SetValue("DeviceName", CachedDeviceName);
+                        if (CachedDpi > 0) key.SetValue("Dpi", CachedDpi);
+                        if (CachedDpiStage > 0) key.SetValue("DpiStage", CachedDpiStage);
+                        if (CachedDpiStageCount > 0) key.SetValue("DpiStageCount", CachedDpiStageCount);
+                        if (CachedDpiStages != null && CachedDpiStages.Length > 0)
+                        {
+                            string stStr = string.Join(",", Array.ConvertAll(CachedDpiStages, s => s.ToString()));
+                            key.SetValue("DpiStages", stStr);
+                        }
+                        if (CachedPollingRate > 0) key.SetValue("PollingRate", CachedPollingRate);
+                        if (CachedLastUpdated != DateTime.MinValue) key.SetValue("LastUpdated", CachedLastUpdated.ToString("o"));
+                    }
+                }
+            }
+            catch { }
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         struct SP_DEVICE_INTERFACE_DATA
@@ -2685,6 +3652,9 @@ namespace RazerBatteryTray
         {
             lock (hidLock)
             {
+                bool foundRazerDongle = false;
+                string foundDeviceName = null;
+
                 Guid hidGuid;
                 HidD_GetHidGuid(out hidGuid);
 
@@ -2729,11 +3699,13 @@ namespace RazerBatteryTray
 
                                             if (caps.FeatureReportByteLength >= 90)
                                             {
+                                                foundRazerDongle = true;
                                                 StringBuilder prod = new StringBuilder(256);
                                                 string prodName = "Razer Mouse";
                                                 if (HidD_GetProductString(handle, prod, prod.Capacity) && prod.Length > 0)
                                                 {
                                                     prodName = prod.ToString();
+                                                    foundDeviceName = prodName;
                                                 }
 
                                                 byte[] transIds = new byte[] { 0x1F, 0x3F, 0xFF };
@@ -2757,10 +3729,10 @@ namespace RazerBatteryTray
                                                             byte cmdId = resp[offset + 7];
                                                             byte rawBatt = resp[offset + 9];
 
-                                                            if (status == 0x02 || (cmdClass == 0x07 && cmdId == 0x80))
+                                                            if (status == 0x02 && cmdClass == 0x07 && cmdId == 0x80 && rawBatt > 0)
                                                             {
                                                                 int pct = (int)Math.Round((rawBatt / 255.0) * 100);
-                                                                pct = Math.Max(0, Math.Min(100, pct));
+                                                                pct = Math.Max(1, Math.Min(100, pct));
 
                                                                 // 2. Query Charging
                                                                 bool isCharging = false;
@@ -2770,7 +3742,7 @@ namespace RazerBatteryTray
                                                                     Thread.Sleep(15);
                                                                     byte[] chgResp = new byte[caps.FeatureReportByteLength];
                                                                     if (prepended) chgResp[0] = 0x00;
-                                                                    if (HidD_GetFeature(handle, chgResp, chgResp.Length))
+                                                                    if (HidD_GetFeature(handle, chgResp, chgResp.Length) && chgResp[offset + 0] == 0x02)
                                                                     {
                                                                         isCharging = (chgResp[offset + 9] == 1);
                                                                     }
@@ -2851,9 +3823,21 @@ namespace RazerBatteryTray
                                                                     }
                                                                 }
 
+                                                                if (pct > 0) CachedBatteryPercent = pct;
+                                                                if (!string.IsNullOrEmpty(prodName)) CachedDeviceName = prodName;
+                                                                if (liveDpi > 0) CachedDpi = liveDpi;
+                                                                if (activeStage > 0) CachedDpiStage = activeStage;
+                                                                if (stageCount > 0) CachedDpiStageCount = stageCount;
+                                                                if (stageList != null && stageList.Length > 0) CachedDpiStages = stageList;
+                                                                if (pollingRate > 0) CachedPollingRate = pollingRate;
+                                                                CachedLastUpdated = DateTime.Now;
+                                                                SaveHardwareCache();
+
                                                                 return new MouseBatteryInfo
                                                                 {
                                                                     IsConnected = true,
+                                                                    IsSleeping = false,
+                                                                    IsDonglePresent = true,
                                                                     DeviceName = prodName,
                                                                     BatteryPercent = pct,
                                                                     IsCharging = isCharging,
@@ -2887,7 +3871,28 @@ namespace RazerBatteryTray
                     SetupDiDestroyDeviceInfoList(devInfo);
                 }
 
-                return new MouseBatteryInfo { IsConnected = false };
+                if (foundRazerDongle)
+                {
+                    string dName = !string.IsNullOrEmpty(foundDeviceName) ? foundDeviceName :
+                                   (!string.IsNullOrEmpty(CachedDeviceName) ? CachedDeviceName : "雷蛇无线设备 (待机)");
+                    return new MouseBatteryInfo
+                    {
+                        IsConnected = true,
+                        IsSleeping = true,
+                        IsDonglePresent = true,
+                        DeviceName = dName,
+                        BatteryPercent = CachedBatteryPercent > 0 ? CachedBatteryPercent : 50,
+                        IsCharging = false,
+                        LastUpdated = CachedLastUpdated != DateTime.MinValue ? CachedLastUpdated : DateTime.Now,
+                        Dpi = CachedDpi > 0 ? CachedDpi : 800,
+                        DpiStage = CachedDpiStage > 0 ? CachedDpiStage : 1,
+                        DpiStageCount = CachedDpiStageCount > 0 ? CachedDpiStageCount : 5,
+                        DpiStages = CachedDpiStages,
+                        PollingRate = CachedPollingRate > 0 ? CachedPollingRate : 1000
+                    };
+                }
+
+                return new MouseBatteryInfo { IsConnected = false, IsSleeping = false, IsDonglePresent = false };
             }
         }
 
@@ -2964,6 +3969,105 @@ namespace RazerBatteryTray
                                                         }
                                                         Marshal.FreeHGlobal(detailBuffer);
                                                         return true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    finally
+                                    {
+                                        CloseHandle(handle);
+                                    }
+                                }
+                            }
+                        }
+                        Marshal.FreeHGlobal(detailBuffer);
+                    }
+                }
+                finally
+                {
+                    SetupDiDestroyDeviceInfoList(devInfo);
+                }
+            }
+            return false;
+        }
+
+        public static bool SetRazerDpiStage(int targetStage)
+        {
+            lock (hidLock)
+            {
+                Guid hidGuid;
+                HidD_GetHidGuid(out hidGuid);
+
+                IntPtr devInfo = SetupDiGetClassDevs(ref hidGuid, null, IntPtr.Zero, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+                if (devInfo == IntPtr.Zero || devInfo == new IntPtr(-1)) return false;
+
+                SP_DEVICE_INTERFACE_DATA ifData = new SP_DEVICE_INTERFACE_DATA();
+                ifData.cbSize = Marshal.SizeOf(ifData);
+
+                uint memberIdx = 0;
+                try
+                {
+                    while (SetupDiEnumDeviceInterfaces(devInfo, IntPtr.Zero, ref hidGuid, memberIdx++, ref ifData))
+                    {
+                        uint reqSize;
+                        SetupDiGetDeviceInterfaceDetail(devInfo, ref ifData, IntPtr.Zero, 0, out reqSize, IntPtr.Zero);
+                        IntPtr detailBuffer = Marshal.AllocHGlobal((int)reqSize);
+                        Marshal.WriteInt32(detailBuffer, IntPtr.Size == 8 ? 8 : 5);
+
+                        if (SetupDiGetDeviceInterfaceDetail(devInfo, ref ifData, detailBuffer, reqSize, out reqSize, IntPtr.Zero))
+                        {
+                            IntPtr pDevicePath = new IntPtr(detailBuffer.ToInt64() + 4);
+                            string devicePath = Marshal.PtrToStringAuto(pDevicePath);
+
+                            if (devicePath != null && devicePath.ToLower().Contains("vid_1532"))
+                            {
+                                IntPtr handle = CreateFile(devicePath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+                                if (handle != IntPtr.Zero && handle.ToInt64() != -1)
+                                {
+                                    try
+                                    {
+                                        IntPtr preparsed;
+                                        if (HidD_GetPreparsedData(handle, out preparsed))
+                                        {
+                                            HIDP_CAPS caps;
+                                            HidP_GetCaps(preparsed, out caps);
+                                            HidD_FreePreparsedData(preparsed);
+
+                                            if (caps.FeatureReportByteLength >= 90)
+                                            {
+                                                bool prepended = (caps.FeatureReportByteLength == 91);
+                                                int offset = prepended ? 1 : 0;
+
+                                                // 1. Read current 38-byte stages table
+                                                byte[] stagesReq = CreateRazerReport(0x1F, 0x04, 0x86, 0x26, caps.FeatureReportByteLength, prepended, new byte[] { 0x01 });
+                                                if (HidD_SetFeature(handle, stagesReq, stagesReq.Length))
+                                                {
+                                                    Thread.Sleep(15);
+                                                    byte[] resp = new byte[caps.FeatureReportByteLength];
+                                                    if (prepended) resp[0] = 0x00;
+                                                    if (HidD_GetFeature(handle, resp, resp.Length) && resp[offset + 0] == 0x02)
+                                                    {
+                                                        byte[] fullPayload = new byte[0x26];
+                                                        Array.Copy(resp, offset + 8, fullPayload, 0, 0x26);
+                                                        fullPayload[1] = (byte)targetStage;
+
+                                                        // 2. Set active stage via Cmd 0x06
+                                                        byte[] setReq = CreateRazerReport(0x1F, 0x04, 0x06, 0x26, caps.FeatureReportByteLength, prepended, fullPayload);
+                                                        if (HidD_SetFeature(handle, setReq, setReq.Length))
+                                                        {
+                                                            Thread.Sleep(20);
+                                                            byte[] setResp = new byte[caps.FeatureReportByteLength];
+                                                            if (prepended) setResp[0] = 0x00;
+                                                            if (HidD_GetFeature(handle, setResp, setResp.Length))
+                                                            {
+                                                                if (setResp[offset + 0] == 0x02)
+                                                                {
+                                                                    Marshal.FreeHGlobal(detailBuffer);
+                                                                    return true;
+                                                                }
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }

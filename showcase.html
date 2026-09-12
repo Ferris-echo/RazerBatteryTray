@@ -1,0 +1,1256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>雷蛇电量管家 (Razer Battery Tray) · 极速丝滑演示</title>
+    <style>
+        :root {
+            --razer-green: #00ff55;
+            --razer-green-glow: rgba(0, 255, 85, 0.4);
+            --razer-green-dark: #008f28;
+            --razer-amber: #f59e0b;
+            --razer-amber-glow: rgba(245, 158, 11, 0.4);
+            --razer-red: #ef4444;
+            --razer-cyan: #06b6d4;
+            --bg-dark: #07090e;
+            --card-bg: rgba(18, 22, 31, 0.75);
+            --card-border: rgba(255, 255, 255, 0.1);
+            --card-border-glow: rgba(0, 255, 85, 0.3);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        /* Particle Canvas Background */
+        #bgCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        /* Ambient Glow Blobs */
+        .glow-blob {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            filter: blur(140px);
+            opacity: 0.25;
+            pointer-events: none;
+            z-index: 0;
+            transition: all 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .blob-1 { top: -100px; left: -100px; background: var(--razer-green); }
+        .blob-2 { bottom: -150px; right: -150px; background: #0284c7; }
+        .blob-3 { top: 40%; left: 50%; transform: translate(-50%, -50%); background: #10b981; opacity: 0.15; }
+
+        /* Top Header Bar */
+        header {
+            position: relative;
+            z-index: 20;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 32px;
+            backdrop-filter: blur(20px);
+            background: rgba(10, 14, 20, 0.6);
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        .logo-box {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            filter: drop-shadow(0 0 10px var(--razer-green-glow));
+            animation: pulse-glow 3s infinite alternate;
+        }
+        .logo-text {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            background: linear-gradient(135deg, #ffffff 40%, var(--razer-green) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .version-badge {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: rgba(0, 255, 85, 0.15);
+            color: var(--razer-green);
+            border: 1px solid rgba(0, 255, 85, 0.3);
+            text-transform: uppercase;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .btn-mode {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--card-border);
+            color: var(--text-main);
+            padding: 7px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.25s ease;
+        }
+        .btn-mode:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.25);
+            transform: translateY(-1px);
+        }
+        .btn-mode.active {
+            background: var(--razer-green);
+            color: #050505;
+            font-weight: 700;
+            border-color: var(--razer-green);
+            box-shadow: 0 0 16px var(--razer-green-glow);
+        }
+
+        /* Slide Container */
+        .stage {
+            position: relative;
+            flex: 1;
+            width: 100%;
+            height: calc(100vh - 64px - 80px);
+            z-index: 10;
+            overflow: hidden;
+        }
+
+        .slide {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            padding: 32px 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(0.96) translateY(24px);
+            transition: all 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .slide.active {
+            opacity: 1;
+            pointer-events: auto;
+            transform: scale(1) translateY(0);
+        }
+
+        /* Content Left & Right Layout */
+        .slide-left {
+            flex: 1.1;
+            max-width: 650px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .slide-right {
+            flex: 0.9;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            perspective: 1200px;
+        }
+
+        .tagline {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            color: var(--razer-green);
+        }
+        .tagline-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--razer-green);
+            box-shadow: 0 0 10px var(--razer-green);
+        }
+
+        .slide-title {
+            font-size: 46px;
+            font-weight: 800;
+            line-height: 1.15;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, #ffffff 50%, #9ca3af 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .slide-title span.highlight {
+            background: linear-gradient(135deg, var(--razer-green) 0%, #10b981 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .slide-title span.warning {
+            background: linear-gradient(135deg, #ff4b4b 0%, #f97316 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .slide-desc {
+            font-size: 17px;
+            line-height: 1.6;
+            color: var(--text-muted);
+        }
+
+        /* Cards and Feature Grids */
+        .feature-list {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            margin-top: 8px;
+        }
+        .feature-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            padding: 14px 18px;
+            border-radius: 12px;
+            backdrop-filter: blur(12px);
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .feature-item:hover {
+            border-color: var(--card-border-glow);
+            transform: translateX(6px);
+            background: rgba(26, 32, 44, 0.85);
+        }
+        .feature-icon-box {
+            width: 38px;
+            height: 38px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            background: rgba(0, 255, 85, 0.12);
+            color: var(--razer-green);
+            flex-shrink: 0;
+            border: 1px solid rgba(0, 255, 85, 0.25);
+        }
+        .feature-item.danger .feature-icon-box {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--razer-red);
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+        .feature-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 2px;
+        }
+        .feature-desc {
+            font-size: 13px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+
+        /* 3D Visual Cards & Windows */
+        .window-mockup {
+            max-height: 500px;
+            border-radius: 14px;
+            box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.8), 0 0 35px var(--razer-green-glow);
+            transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            transform: rotateY(-6deg) rotateX(4deg);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+        .window-mockup:hover {
+            transform: rotateY(0deg) rotateX(0deg) scale(1.02);
+            box-shadow: 0 30px 70px -10px rgba(0, 0, 0, 0.9), 0 0 50px var(--razer-green-glow);
+        }
+
+        /* Interactive Playground Controls */
+        .demo-panel {
+            width: 100%;
+            max-width: 500px;
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 18px;
+            padding: 24px;
+            backdrop-filter: blur(24px);
+            box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .demo-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .toggle-group {
+            display: flex;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 10px;
+            padding: 4px;
+            border: 1px solid var(--card-border);
+            gap: 4px;
+        }
+        .toggle-btn {
+            flex: 1;
+            padding: 8px 12px;
+            border-radius: 8px;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .toggle-btn.active {
+            background: rgba(255, 255, 255, 0.12);
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        }
+        .toggle-btn.active.green {
+            background: var(--razer-green);
+            color: #050505;
+        }
+        .toggle-btn.active.amber {
+            background: var(--razer-amber);
+            color: #050505;
+        }
+
+        /* Gaming Simulator Screen (Slide 5) */
+        .game-sim {
+            width: 520px;
+            height: 330px;
+            border-radius: 14px;
+            position: relative;
+            background: radial-gradient(circle at center, #1f2937 0%, #0b0f17 100%);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+        }
+        .crosshair {
+            width: 24px;
+            height: 24px;
+            position: relative;
+            opacity: 0.6;
+        }
+        .crosshair::before, .crosshair::after {
+            content: '';
+            position: absolute;
+            background: #00ff55;
+            box-shadow: 0 0 8px #00ff55;
+        }
+        .crosshair::before { top: 11px; left: 0; width: 24px; height: 2px; }
+        .crosshair::after { top: 0; left: 11px; width: 2px; height: 24px; }
+
+        .game-hud-osd {
+            position: absolute;
+            top: 24px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 18px;
+            border-radius: 20px;
+            background: rgba(18, 20, 26, 0.95);
+            border: 1px solid rgba(0, 255, 85, 0.4);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8), 0 0 16px rgba(0, 255, 85, 0.3);
+            backdrop-filter: blur(12px);
+            opacity: 0;
+            transform: translateY(-15px) scale(0.95);
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
+        }
+        .game-hud-osd.show {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+
+        /* Bottom Controls & Timeline */
+        footer {
+            position: relative;
+            z-index: 20;
+            height: 80px;
+            backdrop-filter: blur(20px);
+            background: rgba(10, 14, 20, 0.7);
+            border-top: 1px solid var(--card-border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 32px;
+        }
+
+        .timeline-dots {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .dot-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            padding: 6px 12px;
+            border-radius: 8px;
+            background: transparent;
+            transition: all 0.25s ease;
+        }
+        .dot-item:hover {
+            background: rgba(255, 255, 255, 0.06);
+        }
+        .dot-item.active {
+            background: rgba(0, 255, 85, 0.12);
+            border: 1px solid rgba(0, 255, 85, 0.3);
+        }
+        .dot-num {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-muted);
+        }
+        .dot-item.active .dot-num {
+            color: var(--razer-green);
+        }
+        .dot-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+        .dot-item.active .dot-title {
+            color: #fff;
+        }
+
+        /* Subtitle Bar */
+        .subtitle-box {
+            flex: 1;
+            max-width: 700px;
+            text-align: center;
+            margin: 0 24px;
+            padding: 8px 16px;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            font-size: 14px;
+            color: #e5e7eb;
+            letter-spacing: 0.2px;
+            min-height: 38px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .playback-controls {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .ctrl-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--card-border);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.2s ease;
+        }
+        .ctrl-btn:hover {
+            background: rgba(255, 255, 255, 0.14);
+            border-color: rgba(255, 255, 255, 0.3);
+            transform: scale(1.05);
+        }
+        .ctrl-btn.primary {
+            background: var(--razer-green);
+            color: #050505;
+            border-color: var(--razer-green);
+            box-shadow: 0 0 14px var(--razer-green-glow);
+        }
+
+        /* Keyframes */
+        @keyframes pulse-glow {
+            from { filter: drop-shadow(0 0 6px rgba(0,255,85,0.3)); }
+            to { filter: drop-shadow(0 0 16px rgba(0,255,85,0.7)); }
+        }
+
+        @keyframes float-slow {
+            0% { transform: translateY(0px) rotateY(-6deg) rotateX(4deg); }
+            50% { transform: translateY(-8px) rotateY(-4deg) rotateX(3deg); }
+            100% { transform: translateY(0px) rotateY(-6deg) rotateX(4deg); }
+        }
+
+        .float-anim {
+            animation: float-slow 5s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Dynamic Background Particle Canvas -->
+    <canvas id="bgCanvas"></canvas>
+    <div class="glow-blob blob-1" id="blob1"></div>
+    <div class="glow-blob blob-2" id="blob2"></div>
+    <div class="glow-blob blob-3" id="blob3"></div>
+
+    <!-- Header -->
+    <header>
+        <div class="logo-box">
+            <img src="app_icon_clean.png" alt="Razer" class="logo-icon">
+            <div class="logo-text">RAZER BATTERY TRAY</div>
+            <div class="version-badge">v2.0 Pro</div>
+        </div>
+        <div class="header-actions">
+            <button class="btn-mode" id="btnMute" onclick="toggleAudio()">
+                <span id="audioIcon">🔊</span> 配音已开启
+            </button>
+            <button class="btn-mode active" id="btnAutoPlay" onclick="toggleAutoPlay()">
+                <span id="playIcon">⏸</span> 自动放映 (Movie Mode)
+            </button>
+            <button class="btn-mode" onclick="toggleFullScreen()">
+                ⛶ 全屏影院
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Presentation Stage (7 Scenes) -->
+    <main class="stage">
+
+        <!-- Scene 1: 痛点预警 -->
+        <section class="slide active" id="slide0">
+            <div class="slide-left">
+                <div class="tagline">
+                    <div class="tagline-dot" style="background:#ef4444; box-shadow:0 0 10px #ef4444;"></div>
+                    <span>PROBLEM · 痛点困扰</span>
+                </div>
+                <h1 class="slide-title">
+                    团战正酣，鼠标突然<br><span class="warning">红灯断电 毫无预警？</span>
+                </h1>
+                <p class="slide-desc">
+                    你还在忍受动辄占用几百兆内存、开机卡顿、后台服务臃肿的官方雷云驱动吗？想看个电量为什么这么难？
+                </p>
+                <div class="feature-list">
+                    <div class="feature-item danger">
+                        <div class="feature-icon-box">⚠️</div>
+                        <div>
+                            <div class="feature-title">官方雷云驱动：臃肿吃内存</div>
+                            <div class="feature-desc">常驻 8~10 个后台进程，吞噬 500MB+ 内存，拖慢开机与游戏帧率</div>
+                        </div>
+                    </div>
+                    <div class="feature-item danger">
+                        <div class="feature-icon-box">🔋</div>
+                        <div>
+                            <div class="feature-title">休眠误报：电量莫名其妙归零</div>
+                            <div class="feature-desc">鼠标静置休眠后被判定断联，唤醒迟钝，根本无法实时知晓真实剩余</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="slide-right">
+                <div class="demo-panel" style="border-color: rgba(239, 68, 68, 0.3);">
+                    <div class="demo-title" style="color: #ef4444;">
+                        <span>系统资源监视器 (对比)</span>
+                        <span>⚠️ 严重超标</span>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:12px;">
+                        <div>
+                            <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px;">
+                                <span>Razer Synapse (雷云驱动全家桶)</span>
+                                <span style="color:#ef4444; font-weight:700;">524.8 MB</span>
+                            </div>
+                            <div style="height:10px; background:#261214; border-radius:5px; overflow:hidden;">
+                                <div style="width:92%; height:100%; background:linear-gradient(90deg, #ef4444, #dc2626);"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:6px;">
+                                <span>Razer Battery Tray (本项目)</span>
+                                <span style="color:var(--razer-green); font-weight:700;">14.8 MB (-97%)</span>
+                            </div>
+                            <div style="height:10px; background:#0f2419; border-radius:5px; overflow:hidden;">
+                                <div style="width:3%; height:100%; background:var(--razer-green);"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-muted); text-align:center; padding-top:8px; border-top:1px solid var(--card-border);">
+                        节约 97% 电脑内存 · 开机秒进桌面
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Scene 2: 震撼登场 -->
+        <section class="slide" id="slide1">
+            <div class="slide-left">
+                <div class="tagline">
+                    <div class="tagline-dot"></div>
+                    <span>INTRODUCING · 震撼登场</span>
+                </div>
+                <h1 class="slide-title">
+                    专为雷蛇鼠标深度打造<br><span class="highlight">全新一代 · 电量管家</span>
+                </h1>
+                <p class="slide-desc">
+                    彻底甩掉臃肿外壳，回归纯粹与极致体验。轻量、智能、绝美，专属于雷蛇无线玩家的神级桌面搭档。
+                </p>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-icon-box">⚡</div>
+                        <div>
+                            <div class="feature-title">0.1 秒秒速唤醒启动</div>
+                            <div class="feature-desc">原生 C# 底层构建，无 Electron 杂质，单文件绿色即开即用</div>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon-box">🎨</div>
+                        <div>
+                            <div class="feature-title">原生 Windows 11 暗黑美学</div>
+                            <div class="feature-desc">Mica 拟态质感、细腻圆角、呼吸式绿环与状态指示，美如天成</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="slide-right">
+                <img src="win11_awake.png" alt="Win11 UI" class="window-mockup float-anim" id="heroWin">
+            </div>
+        </section>
+
+        <!-- Scene 3: 极致轻量 -->
+        <section class="slide" id="slide2">
+            <div class="slide-left">
+                <div class="tagline">
+                    <div class="tagline-dot"></div>
+                    <span>PERFORMANCE · 极致轻盈</span>
+                </div>
+                <h1 class="slide-title">
+                    仅 <span class="highlight">15MB 极速内存</span><br>零负载 满血释放算力
+                </h1>
+                <p class="slide-desc">
+                    没有任何多余的云同步、社交弹窗或后台遥测。CPU 占用长期保持 0.00%，将每一滴硬件性能留给电竞战场！
+                </p>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-icon-box">🚀</div>
+                        <div>
+                            <div class="feature-title">绿色纯净免安装</div>
+                            <div class="feature-desc">仅需一个 EXE 文件，解压即可运行，不污染 Windows 注册表</div>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon-box">🛡️</div>
+                        <div>
+                            <div class="feature-title">100% 离线隐私安全</div>
+                            <div class="feature-desc">不向任何外部服务器发送数据，拒绝任何形式的后台暗中回传</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="slide-right">
+                <div class="demo-panel">
+                    <div class="demo-title">
+                        <span>实时性能监控仪表</span>
+                        <span style="color:var(--razer-green);">● 极速平稳</span>
+                    </div>
+                    <div style="text-align:center; padding: 20px 0;">
+                        <div style="font-size: 64px; font-weight: 800; color:var(--razer-green); text-shadow:0 0 25px var(--razer-green-glow);" id="ramNum">14.8</div>
+                        <div style="font-size: 14px; color:var(--text-muted); text-transform:uppercase; letter-spacing:1.5px;">RAM USAGE (MB)</div>
+                    </div>
+                    <div style="display:flex; justify-content:space-around; border-top:1px solid var(--card-border); padding-top:16px;">
+                        <div style="text-align:center;">
+                            <div style="font-size:20px; font-weight:700; color:#fff;">0.01%</div>
+                            <div style="font-size:12px; color:var(--text-muted);">CPU 占用</div>
+                        </div>
+                        <div style="text-align:center;">
+                            <div style="font-size:20px; font-weight:700; color:#fff;">0.08s</div>
+                            <div style="font-size:12px; color:var(--text-muted);">冷启动速度</div>
+                        </div>
+                        <div style="text-align:center;">
+                            <div style="font-size:20px; font-weight:700; color:#fff;">0 个</div>
+                            <div style="font-size:12px; color:var(--text-muted);">多余关联进程</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Scene 4: 独家智能休眠与唤醒 -->
+        <section class="slide" id="slide3">
+            <div class="slide-left">
+                <div class="tagline">
+                    <div class="tagline-dot" style="background:var(--razer-amber); box-shadow:0 0 10px var(--razer-amber);"></div>
+                    <span>INTELLIGENCE · 独家智能算法</span>
+                </div>
+                <h1 class="slide-title">
+                    智能休眠与唤醒识别<br><span style="color:var(--razer-amber);">告别 0% 电量尴尬</span>
+                </h1>
+                <p class="slide-desc">
+                    鼠标静置休眠时，自动无缝切换至琥珀金「休眠待机」模式；一旦晃动鼠标，毫秒级快速同步真实电量，精准可靠！
+                </p>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-icon-box" style="background:rgba(245,158,11,0.15); color:var(--razer-amber); border-color:rgba(245,158,11,0.3);">◐</div>
+                        <div>
+                            <div class="feature-title">双状态智能感知</div>
+                            <div class="feature-desc">区分“彻底拔出断联”与“静置待机休眠”，保留最新有效电量记忆</div>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon-box" style="background:rgba(245,158,11,0.15); color:var(--razer-amber); border-color:rgba(245,158,11,0.3);">⚡</div>
+                        <div>
+                            <div class="feature-title">动静自如 毫秒响应</div>
+                            <div class="feature-desc">拿起鼠标的瞬间触发即时采样，无需等待轮询周期</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="slide-right">
+                <div style="display:flex; flex-direction:column; align-items:center; gap:16px;">
+                    <div class="toggle-group" style="width: 320px;">
+                        <button class="toggle-btn active green" id="btnStateAwake" onclick="setSimState('awake')">🌞 正常工作 (90%)</button>
+                        <button class="toggle-btn" id="btnStateSleep" onclick="setSimState('sleep')">🌙 休眠待机 (90%)</button>
+                    </div>
+                    <img src="win11_awake.png" alt="State Window" class="window-mockup" id="simStateImg" style="max-height:460px;">
+                </div>
+            </div>
+        </section>
+
+        <!-- Scene 5: 游戏无感 OSD -->
+        <section class="slide" id="slide4">
+            <div class="slide-left">
+                <div class="tagline">
+                    <div class="tagline-dot"></div>
+                    <span>GAMING OSD · 全屏无感覆盖</span>
+                </div>
+                <h1 class="slide-title">
+                    全屏游戏无感 OSD<br><span class="highlight">鼠标 100% 穿透 不跳桌面</span>
+                </h1>
+                <p class="slide-desc">
+                    通过底层 Win32 零焦点通知架构与鼠标全穿透属性，在无边框全屏游戏中切换 DPI 顺滑显现，绝不抢占前台焦点，团战甩枪毫无阻滞！
+                </p>
+                <div class="feature-list">
+                    <div class="feature-item">
+                        <div class="feature-icon-box">🎮</div>
+                        <div>
+                            <div class="feature-title">零焦点置顶渲染</div>
+                            <div class="feature-desc">SWP_NOACTIVATE 严防焦点剥夺，游戏绝不被最小化切回桌面</div>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon-box">🎯</div>
+                        <div>
+                            <div class="feature-title">物理级鼠标穿透 (WS_EX_TRANSPARENT)</div>
+                            <div class="feature-desc">弹窗无论多大，鼠标狂点直接命中游戏准心，竞技手感丝毫无损</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="slide-right">
+                <div style="display:flex; flex-direction:column; align-items:center; gap:16px;">
+                    <div class="game-sim" id="gameSimScreen">
+                        <div class="crosshair"></div>
+                        <div class="game-hud-osd" id="hudOsd">
+                            <span style="color:var(--razer-green); font-size:16px;">⚡</span>
+                            <span style="font-weight:700; font-size:14px; color:#fff;" id="hudDpiText">DPI: 1600</span>
+                            <span style="color:var(--text-muted); font-size:12px;">| 🔋 90%</span>
+                        </div>
+                        <div style="position:absolute; bottom:12px; left:16px; font-size:11px; color:rgba(255,255,255,0.4);">
+                            游戏视角模拟 · 无边框全屏 144Hz
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:12px;">
+                        <button class="btn-mode" onclick="triggerDpiDemo(800)">切至 800 DPI</button>
+                        <button class="btn-mode active" onclick="triggerDpiDemo(1600)">切至 1600 DPI</button>
+                        <button class="btn-mode" onclick="triggerDpiDemo(3200)">切至 3200 DPI</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Scene 6: 颜值天花板 · 三大原生风格 -->
+        <section class="slide" id="slide5">
+            <div class="slide-left">
+                <div class="tagline">
+                    <div class="tagline-dot"></div>
+                    <span>AESTHETICS · 原生美学</span>
+                </div>
+                <h1 class="slide-title">
+                    三大原生托盘风格<br><span class="highlight">像素级对齐 颜值拉满</span>
+                </h1>
+                <p class="slide-desc">
+                    深度契合 Windows 11 设计语言。无论是极简极客的居中胶囊，还是经典的紧凑微标，随心自由切换，桌面精致到每一像素。
+                </p>
+                <div class="feature-list">
+                    <div class="feature-item" onclick="selectTrayStyle(0)" style="cursor:pointer;" id="cardStyle0">
+                        <div class="feature-icon-box">💊</div>
+                        <div style="flex:1;">
+                            <div class="feature-title">风格 1：居中拟态胶囊 (推荐)</div>
+                            <div class="feature-desc">半透明暗黑胶囊背景，绿意能量条与高对比数值黄金对齐</div>
+                        </div>
+                    </div>
+                    <div class="feature-item" onclick="selectTrayStyle(1)" style="cursor:pointer;" id="cardStyle1">
+                        <div class="feature-icon-box">🏷️</div>
+                        <div style="flex:1;">
+                            <div class="feature-title">风格 2：紧凑微型徽标</div>
+                            <div class="feature-desc">左侧雷蛇微标，右侧圆角电量角标，精致小巧不突兀</div>
+                        </div>
+                    </div>
+                    <div class="feature-item" onclick="selectTrayStyle(2)" style="cursor:pointer;" id="cardStyle2">
+                        <div class="feature-icon-box">🔘</div>
+                        <div style="flex:1;">
+                            <div class="feature-title">风格 3：极简状态指示</div>
+                            <div class="feature-desc">大号电量数字搭配底部能量光条，一目了然</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="slide-right">
+                <div class="demo-panel" style="text-align:center; align-items:center;">
+                    <div class="demo-title" style="width:100%;">
+                        <span>任务栏高保真预览</span>
+                        <span style="color:var(--razer-green);">100% 比例</span>
+                    </div>
+                    <div style="background:#131822; padding:24px; border-radius:12px; border:1px solid var(--card-border); width:100%; display:flex; flex-direction:column; align-items:center; gap:16px;">
+                        <img src="final_tray_style_0_p100.png" alt="Tray Preview" id="trayPreviewImg" style="image-rendering:pixelated; transform:scale(2.5); margin: 20px 0;">
+                        <div style="font-size:14px; font-weight:700; color:#fff;" id="trayStyleLabel">当前所选：居中拟态胶囊 (Style 0)</div>
+                    </div>
+                    <img src="verified_tray_styles.png" alt="All styles" style="max-width:100%; border-radius:8px; opacity:0.8;">
+                </div>
+            </div>
+        </section>
+
+        <!-- Scene 7: 纯粹极客 & 开源下载 -->
+        <section class="slide" id="slide6">
+            <div class="slide-left">
+                <div class="tagline">
+                    <div class="tagline-dot"></div>
+                    <span>GET IT NOW · 立即获取</span>
+                </div>
+                <h1 class="slide-title">
+                    纯粹极客 开源免费<br><span class="highlight">让你的雷蛇鼠标 回归纯粹</span>
+                </h1>
+                <p class="slide-desc">
+                    代码完全透明，不掺杂任何广告或商业推广。属于每一个真正热爱纯净电脑环境的雷蛇玩家！
+                </p>
+                <div style="display:flex; flex-direction:column; gap:12px; margin-top:12px;">
+                    <div style="display:flex; gap:16px;">
+                        <div style="flex:1; background:var(--card-bg); padding:16px; border-radius:12px; border:1px solid var(--card-border);">
+                            <div style="font-size:24px; font-weight:800; color:var(--razer-green);">0 广告</div>
+                            <div style="font-size:13px; color:var(--text-muted);">纯净清爽 无弹窗干扰</div>
+                        </div>
+                        <div style="flex:1; background:var(--card-bg); padding:16px; border-radius:12px; border:1px solid var(--card-border);">
+                            <div style="font-size:24px; font-weight:800; color:var(--razer-green);">100%</div>
+                            <div style="font-size:13px; color:var(--text-muted);">代码开放 放心使用</div>
+                        </div>
+                    </div>
+                    <div style="margin-top:16px; display:flex; gap:16px;">
+                        <button class="btn-mode active" style="padding:14px 32px; font-size:16px;" onclick="playSfx('success')">
+                            🚀 立即解压体验 RazerBatteryTray.exe
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="slide-right">
+                <img src="bilibili_cover.jpg" alt="Cover" style="max-width:540px; border-radius:16px; box-shadow:0 25px 50px rgba(0,0,0,0.8); border:1px solid rgba(255,255,255,0.15);">
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Bottom Controls & Timeline Bar -->
+    <footer>
+        <div class="timeline-dots" id="timelineDots"></div>
+
+        <div class="subtitle-box" id="subtitles">
+            正在载入精彩演示...
+        </div>
+
+        <div class="playback-controls">
+            <button class="ctrl-btn" onclick="prevSlide()" title="上一页 (Left Arrow)">◀</button>
+            <button class="ctrl-btn primary" id="btnPlayPause" onclick="togglePlayPause()" title="播放/暂停 (Space)">⏸</button>
+            <button class="ctrl-btn" onclick="nextSlide()" title="下一页 (Right Arrow)">▶</button>
+        </div>
+    </footer>
+
+    <!-- Audio Player Elements for 7 Scenes -->
+    <div style="display:none;">
+        <audio id="audio0" src="audio_voice/scene1_hook.m4a" preload="auto"></audio>
+        <audio id="audio1" src="audio_voice/scene2_intro.m4a" preload="auto"></audio>
+        <audio id="audio2" src="audio_voice/scene3_light.m4a" preload="auto"></audio>
+        <audio id="audio3" src="audio_voice/scene4_sleep.m4a" preload="auto"></audio>
+        <audio id="audio4" src="audio_voice/scene5_osd.m4a" preload="auto"></audio>
+        <audio id="audio5" src="audio_voice/scene6_styles.m4a" preload="auto"></audio>
+        <audio id="audio6" src="audio_voice/scene7_outro.m4a" preload="auto"></audio>
+    </div>
+
+    <script>
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx = null;
+
+        function getAudioContext() {
+            if (!audioCtx) audioCtx = new AudioContext();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            return audioCtx;
+        }
+
+        function playSfx(type) {
+            try {
+                const ctx = getAudioContext();
+                const now = ctx.currentTime;
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+
+                if (type === 'click') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(800, now);
+                    osc.frequency.exponentialRampToValueAtTime(400, now + 0.05);
+                    gain.gain.setValueAtTime(0.2, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+                    osc.start(now);
+                    osc.stop(now + 0.05);
+                } else if (type === 'switch') {
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(520, now);
+                    osc.frequency.exponentialRampToValueAtTime(880, now + 0.08);
+                    gain.gain.setValueAtTime(0.25, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+                    osc.start(now);
+                    osc.stop(now + 0.08);
+                } else if (type === 'success') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(587.33, now);
+                    osc.frequency.setValueAtTime(880, now + 0.08);
+                    gain.gain.setValueAtTime(0.3, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+                    osc.start(now);
+                    osc.stop(now + 0.25);
+                }
+            } catch (e) {}
+        }
+
+        const slidesData = [
+            { title: "痛点困扰", subtitle: "玩游戏关键时刻，雷蛇鼠标突然红灯断电？想看电量，还要忍受臃肿卡顿、动辄几百兆内存的官方雷云驱动？", duration: 11500 },
+            { title: "震撼登场", subtitle: "别忍了！专为雷蛇无线鼠标深度打造，全新一代雷蛇电量管家，轻量震撼登场！", duration: 9000 },
+            { title: "极速轻量", subtitle: "告别臃肿！仅占十五兆极速内存，零点一秒瞬间启动，后台零负担运行，释放你的全部电脑性能！", duration: 11000 },
+            { title: "智能休眠", subtitle: "独家智能休眠与唤醒算法！彻底告别休眠误判零电量，拿起鼠标瞬间秒级刷新，电量尽在掌控！", duration: 10500 },
+            { title: "游戏OSD", subtitle: "全新无感游戏悬浮窗！调节DPI丝滑浮现，完全鼠标穿透不卡枪，无边框全屏游戏再也不切回桌面！", duration: 11000 },
+            { title: "原生美学", subtitle: "像素级还原 Windows 11 原生美学！三大托盘风格自由切换，拟态胶囊、微型徽标，精致尽收眼底！", duration: 11000 },
+            { title: "立即获取", subtitle: "永久开源，纯净绿色免安装，解压即用！让你的雷蛇鼠标，回归纯粹与强大！快来体验吧！", duration: 11000 }
+        ];
+
+        let currentSlide = 0;
+        let isAutoPlay = true;
+        let isAudioMuted = false;
+        let slideTimer = null;
+
+        const dotsContainer = document.getElementById("timelineDots");
+        slidesData.forEach((s, idx) => {
+            const div = document.createElement("div");
+            div.className = `dot-item ${idx === 0 ? 'active' : ''}`;
+            div.id = `dot${idx}`;
+            div.onclick = () => goToSlide(idx);
+            div.innerHTML = `<span class="dot-num">0${idx + 1}</span><span class="dot-title">${s.title}</span>`;
+            dotsContainer.appendChild(div);
+        });
+
+        function updateSlideUI() {
+            for (let i = 0; i < slidesData.length; i++) {
+                const sl = document.getElementById(`slide${i}`);
+                const dt = document.getElementById(`dot${i}`);
+                if (sl) sl.classList.toggle("active", i === currentSlide);
+                if (dt) dt.classList.toggle("active", i === currentSlide);
+            }
+
+            const subBox = document.getElementById("subtitles");
+            subBox.innerHTML = `<span>${slidesData[currentSlide].subtitle}</span>`;
+
+            stopAllAudios();
+            if (!isAudioMuted) {
+                const aud = document.getElementById(`audio${currentSlide}`);
+                if (aud) {
+                    aud.currentTime = 0;
+                    aud.play().catch(()=>{});
+                }
+            }
+            triggerSlideSpecialEffects(currentSlide);
+        }
+
+        function stopAllAudios() {
+            for (let i = 0; i < slidesData.length; i++) {
+                const aud = document.getElementById(`audio${i}`);
+                if (aud) { aud.pause(); aud.currentTime = 0; }
+            }
+        }
+
+        function goToSlide(idx) {
+            currentSlide = idx;
+            playSfx('switch');
+            updateSlideUI();
+            resetAutoPlayTimer();
+        }
+
+        function nextSlide() {
+            currentSlide = (currentSlide + 1) % slidesData.length;
+            playSfx('switch');
+            updateSlideUI();
+            resetAutoPlayTimer();
+        }
+
+        function prevSlide() {
+            currentSlide = (currentSlide - 1 + slidesData.length) % slidesData.length;
+            playSfx('switch');
+            updateSlideUI();
+            resetAutoPlayTimer();
+        }
+
+        function resetAutoPlayTimer() {
+            if (slideTimer) clearTimeout(slideTimer);
+            if (isAutoPlay) {
+                const currentDur = slidesData[currentSlide].duration || 10000;
+                slideTimer = setTimeout(() => {
+                    nextSlide();
+                }, currentDur);
+            }
+        }
+
+        function togglePlayPause() {
+            isAutoPlay = !isAutoPlay;
+            const btn = document.getElementById("btnPlayPause");
+            const btnTop = document.getElementById("btnAutoPlay");
+            const playIcon = document.getElementById("playIcon");
+
+            if (isAutoPlay) {
+                btn.innerHTML = "⏸";
+                playIcon.innerHTML = "⏸";
+                btnTop.classList.add("active");
+                resetAutoPlayTimer();
+                const aud = document.getElementById(`audio${currentSlide}`);
+                if (aud && !isAudioMuted) aud.play().catch(()=>{});
+            } else {
+                btn.innerHTML = "▶";
+                playIcon.innerHTML = "▶";
+                btnTop.classList.remove("active");
+                if (slideTimer) clearTimeout(slideTimer);
+                const aud = document.getElementById(`audio${currentSlide}`);
+                if (aud) aud.pause();
+            }
+            playSfx('click');
+        }
+
+        function toggleAutoPlay() { togglePlayPause(); }
+
+        function toggleAudio() {
+            isAudioMuted = !isAudioMuted;
+            const btn = document.getElementById("btnMute");
+            const icon = document.getElementById("audioIcon");
+            if (isAudioMuted) {
+                icon.innerHTML = "🔇";
+                btn.innerHTML = `<span id="audioIcon">🔇</span> 静音中`;
+                stopAllAudios();
+            } else {
+                icon.innerHTML = "🔊";
+                btn.innerHTML = `<span id="audioIcon">🔊</span> 配音已开启`;
+                const aud = document.getElementById(`audio${currentSlide}`);
+                if (aud) aud.play().catch(()=>{});
+            }
+            playSfx('click');
+        }
+
+        function toggleFullScreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(()=>{});
+            } else {
+                document.exitFullscreen().catch(()=>{});
+            }
+            playSfx('click');
+        }
+
+        window.addEventListener("keydown", (e) => {
+            if (e.code === "Space") {
+                e.preventDefault();
+                togglePlayPause();
+            } else if (e.code === "ArrowRight") {
+                nextSlide();
+            } else if (e.code === "ArrowLeft") {
+                prevSlide();
+            } else if (e.key === "f" || e.key === "F") {
+                toggleFullScreen();
+            }
+        });
+
+        function triggerSlideSpecialEffects(slideIdx) {
+            if (slideIdx === 2) {
+                let val = 52.0;
+                const ramElem = document.getElementById("ramNum");
+                const timer = setInterval(() => {
+                    val -= 2.4;
+                    if (val <= 14.8) {
+                        val = 14.8;
+                        clearInterval(timer);
+                    }
+                    ramElem.innerText = val.toFixed(1);
+                }, 35);
+            } else if (slideIdx === 4) {
+                setTimeout(() => { triggerDpiDemo(1600); }, 1500);
+            }
+        }
+
+        function setSimState(state) {
+            const btnAwake = document.getElementById("btnStateAwake");
+            const btnSleep = document.getElementById("btnStateSleep");
+            const img = document.getElementById("simStateImg");
+
+            playSfx('switch');
+            if (state === 'awake') {
+                btnAwake.className = "toggle-btn active green";
+                btnSleep.className = "toggle-btn";
+                img.src = "win11_awake.png";
+            } else {
+                btnSleep.className = "toggle-btn active amber";
+                btnAwake.className = "toggle-btn";
+                img.src = "win11_sleep.png";
+            }
+        }
+
+        let hudTimer = null;
+        function triggerDpiDemo(dpi) {
+            playSfx('click');
+            const hud = document.getElementById("hudOsd");
+            const txt = document.getElementById("hudDpiText");
+            txt.innerText = `DPI: ${dpi}`;
+            hud.classList.add("show");
+
+            if (hudTimer) clearTimeout(hudTimer);
+            hudTimer = setTimeout(() => { hud.classList.remove("show"); }, 2500);
+        }
+
+        function selectTrayStyle(styleIdx) {
+            playSfx('switch');
+            const preview = document.getElementById("trayPreviewImg");
+            const label = document.getElementById("trayStyleLabel");
+
+            preview.src = `final_tray_style_${styleIdx}_p100.png`;
+            const names = ["居中拟态胶囊 (Style 0)", "紧凑微型徽标 (Style 1)", "极简状态指示 (Style 2)"];
+            label.innerText = `当前所选：${names[styleIdx]}`;
+
+            for (let i = 0; i < 3; i++) {
+                const c = document.getElementById(`cardStyle${i}`);
+                if (c) {
+                    if (i === styleIdx) {
+                        c.style.borderColor = "var(--razer-green)";
+                        c.style.background = "rgba(0, 255, 85, 0.08)";
+                    } else {
+                        c.style.borderColor = "var(--card-border)";
+                        c.style.background = "var(--card-bg)";
+                    }
+                }
+            }
+        }
+
+        const canvas = document.getElementById("bgCanvas");
+        const ctx = canvas.getContext("2d");
+        let width = canvas.width = window.innerWidth;
+        let height = canvas.height = window.innerHeight;
+
+        window.addEventListener("resize", () => {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        });
+
+        const particles = [];
+        for (let i = 0; i < 60; i++) {
+            particles.push({
+                x: Math.random() * width,
+                y: Math.random() * height,
+                vx: (Math.random() - 0.5) * 0.6,
+                vy: (Math.random() - 0.5) * 0.6,
+                radius: Math.random() * 2 + 1,
+                alpha: Math.random() * 0.5 + 0.2
+            });
+        }
+
+        let mouseX = width / 2;
+        let mouseY = height / 2;
+        window.addEventListener("mousemove", (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+            const b1 = document.getElementById("blob1");
+            const b2 = document.getElementById("blob2");
+            if (b1 && b2) {
+                b1.style.transform = `translate(${(mouseX - width / 2) * 0.05}px, ${(mouseY - height / 2) * 0.05}px)`;
+                b2.style.transform = `translate(${(width / 2 - mouseX) * 0.05}px, ${(height / 2 - mouseY) * 0.05}px)`;
+            }
+        });
+
+        function animateParticles() {
+            ctx.clearRect(0, 0, width, height);
+            particles.forEach(p => {
+                p.x += p.vx;
+                p.y += p.vy;
+                if (p.x < 0) p.x = width;
+                if (p.x > width) p.x = 0;
+                if (p.y < 0) p.y = height;
+                if (p.y > height) p.y = 0;
+
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(0, 255, 85, ${p.alpha})`;
+                ctx.fill();
+            });
+            requestAnimationFrame(animateParticles);
+        }
+        animateParticles();
+
+        updateSlideUI();
+        resetAutoPlayTimer();
+    </script>
+</body>
+</html>
