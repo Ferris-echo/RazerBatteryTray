@@ -36,7 +36,7 @@
 | :---: | :---: |
 | ![正常工作状态](screenshots/win11_awake.png) | ![休眠待机状态](screenshots/win11_sleep.png) |
 
-### 任务栏三大原生风格展示
+### 任务栏两大原生风格展示
 ![任务栏托盘样式](screenshots/verified_tray_styles.png)
 
 ---
